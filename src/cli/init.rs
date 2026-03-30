@@ -4,6 +4,7 @@ use clap::Args;
 
 use crate::db::Store;
 use crate::error::MocoError;
+use crate::theme::Theme;
 use crate::workspace;
 
 #[derive(Args)]
@@ -16,7 +17,7 @@ pub struct InitArgs {
     pub force: bool,
 }
 
-pub fn run(args: &InitArgs, store: &mut dyn Store, cwd: &Path) -> anyhow::Result<()> {
+pub fn run(args: &InitArgs, store: &mut dyn Store, cwd: &Path, theme: &Theme) -> anyhow::Result<()> {
     let canonical = workspace::canonical(cwd);
 
     // Check if this exact path is already registered.
@@ -32,9 +33,9 @@ pub fn run(args: &InitArgs, store: &mut dyn Store, cwd: &Path) -> anyhow::Result
 
     let project = store.create_project(&args.name, &canonical)?;
     println!(
-        "Initialized project '{}' at {}",
-        project.name,
-        canonical.display()
+        "Initialized project {} at {}",
+        theme.paint(format!("'{}'", project.name), theme.accent),
+        theme.paint(canonical.display(), theme.accent),
     );
 
     Ok(())

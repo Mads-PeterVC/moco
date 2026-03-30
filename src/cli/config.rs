@@ -1,6 +1,7 @@
 use clap::{Args, Subcommand};
 
 use crate::config::{AppConfig, MocoConfig};
+use crate::theme::Theme;
 
 #[derive(Args)]
 pub struct ConfigArgs {
@@ -14,13 +15,13 @@ pub enum ConfigCommand {
     Check,
 }
 
-pub fn run(args: &ConfigArgs, config: &AppConfig) -> anyhow::Result<()> {
+pub fn run(args: &ConfigArgs, config: &AppConfig, theme: &Theme) -> anyhow::Result<()> {
     match &args.command {
-        ConfigCommand::Check => run_check(config),
+        ConfigCommand::Check => run_check(config, theme),
     }
 }
 
-fn run_check(config: &AppConfig) -> anyhow::Result<()> {
+fn run_check(config: &AppConfig, theme: &Theme) -> anyhow::Result<()> {
     let config_path = MocoConfig::config_path(&config.moco_dir);
     let mut issues: Vec<String> = Vec::new();
 
@@ -46,16 +47,20 @@ fn run_check(config: &AppConfig) -> anyhow::Result<()> {
         // File absent is fine (defaults apply), but let the user know.
         println!(
             "Config file not found at {}. Using defaults.",
-            config_path.display()
+            theme.paint(config_path.display(), theme.accent),
         );
         return Ok(());
     }
 
     if issues.is_empty() {
-        println!("Configuration OK ({})", config_path.display());
+        println!(
+            "{} ({})",
+            theme.paint("Configuration OK", theme.complete),
+            theme.paint(config_path.display(), theme.accent),
+        );
     } else {
         for issue in &issues {
-            eprintln!("  ✗ {issue}");
+            eprintln!("  {} {issue}", theme.paint("✗", theme.defer));
         }
         anyhow::bail!("Configuration has {} issue(s).", issues.len());
     }
@@ -76,6 +81,7 @@ fn which(cmd: &str) -> Option<std::path::PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::theme::ThemeConfig;
     use tempfile::TempDir;
 
     fn make_config(tmp: &TempDir) -> AppConfig {
@@ -88,12 +94,16 @@ mod tests {
         }
     }
 
+    fn default_theme() -> Theme {
+        Theme::resolve(&ThemeConfig::default())
+    }
+
     #[test]
     fn check_passes_with_absent_config() {
         let tmp = TempDir::new().unwrap();
         let config = make_config(&tmp);
         // No config.toml written — should not error.
-        run_check(&config).expect("check should pass with absent config");
+        run_check(&config, &default_theme()).expect("check should pass with absent config");
     }
 
     #[test]
@@ -101,7 +111,7 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let config = make_config(&tmp);
         std::fs::write(MocoConfig::config_path(&config.moco_dir), "").unwrap();
-        run_check(&config).expect("check should pass with empty config");
+        run_check(&config, &default_theme()).expect("check should pass with empty config");
     }
 
     #[test]
@@ -113,7 +123,7 @@ mod tests {
             "open_with = [invalid",
         )
         .unwrap();
-        assert!(run_check(&config).is_err());
+        assert!(run_check(&config, &default_theme()).is_err());
     }
 
     #[test]
@@ -125,7 +135,7 @@ mod tests {
             "open_with = \"__moco_nonexistent_cmd__\"\n",
         )
         .unwrap();
-        assert!(run_check(&config).is_err());
+        assert!(run_check(&config, &default_theme()).is_err());
     }
 
     #[test]

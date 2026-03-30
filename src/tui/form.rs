@@ -2,12 +2,13 @@ use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::{
     Frame,
     layout::{Constraint, Direction, Layout, Rect},
-    style::{Color, Modifier, Style},
+    style::{Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, Paragraph},
 };
 use tui_textarea::TextArea;
 
+use crate::theme::Theme;
 use crate::tui::keys;
 
 /// The focusable fields in the add/edit form.
@@ -47,16 +48,17 @@ pub struct TaskForm<'a> {
     pub focused: FormField,
     title_area: TextArea<'a>,
     body_area: TextArea<'a>,
+    theme: Theme,
 }
 
 impl<'a> TaskForm<'a> {
-    /// Create a blank form.
-    pub fn new() -> Self {
-        Self::with_values("", "")
+    /// Create a blank form using the given theme.
+    pub fn new(theme: Theme) -> Self {
+        Self::with_values("", "", theme)
     }
 
     /// Create a form pre-populated with existing values (for editing).
-    pub fn with_values(title: &str, body: &str) -> Self {
+    pub fn with_values(title: &str, body: &str, theme: Theme) -> Self {
         let mut title_area = TextArea::default();
         if !title.is_empty() {
             title_area.insert_str(title);
@@ -73,14 +75,15 @@ impl<'a> TaskForm<'a> {
             focused: FormField::Title,
             title_area,
             body_area,
+            theme,
         };
         form.apply_styles();
         form
     }
 
     fn apply_styles(&mut self) {
-        let active = Style::default().fg(Color::Yellow);
-        let inactive = Style::default().fg(Color::DarkGray);
+        let active = Style::default().fg(self.theme.accent);
+        let inactive = Style::default().fg(self.theme.selection_bg);
 
         let (title_style, body_style) = match self.focused {
             FormField::Title => (active, inactive),
@@ -165,7 +168,7 @@ impl<'a> TaskForm<'a> {
             Span::styled("Esc", Style::default().add_modifier(Modifier::BOLD)),
             Span::raw(" cancel"),
         ]))
-        .style(Style::default().fg(Color::DarkGray));
+        .style(Style::default().fg(self.theme.selection_bg));
         frame.render_widget(help, chunks[2]);
     }
 
@@ -182,6 +185,12 @@ mod tests {
     use super::*;
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
+    use crate::theme::{Theme, ThemeConfig};
+
+    fn default_theme() -> Theme {
+        Theme::resolve(&ThemeConfig::default())
+    }
+
     fn key(code: KeyCode) -> KeyEvent {
         KeyEvent::new(code, KeyModifiers::NONE)
     }
@@ -192,20 +201,20 @@ mod tests {
 
     #[test]
     fn new_form_focuses_title() {
-        let form = TaskForm::new();
+        let form = TaskForm::new(default_theme());
         assert_eq!(form.focused, FormField::Title);
     }
 
     #[test]
     fn tab_moves_focus_to_body() {
-        let mut form = TaskForm::new();
+        let mut form = TaskForm::new(default_theme());
         form.handle_key(key(KeyCode::Tab));
         assert_eq!(form.focused, FormField::Body);
     }
 
     #[test]
     fn tab_wraps_back_to_title() {
-        let mut form = TaskForm::new();
+        let mut form = TaskForm::new(default_theme());
         form.handle_key(key(KeyCode::Tab));
         form.handle_key(key(KeyCode::Tab));
         assert_eq!(form.focused, FormField::Title);
@@ -213,21 +222,21 @@ mod tests {
 
     #[test]
     fn ctrl_s_returns_submitted() {
-        let mut form = TaskForm::new();
+        let mut form = TaskForm::new(default_theme());
         let outcome = form.handle_key(ctrl('s'));
         assert!(matches!(outcome, FormOutcome::Submitted));
     }
 
     #[test]
     fn esc_returns_cancelled() {
-        let mut form = TaskForm::new();
+        let mut form = TaskForm::new(default_theme());
         let outcome = form.handle_key(key(KeyCode::Esc));
         assert!(matches!(outcome, FormOutcome::Cancelled));
     }
 
     #[test]
     fn enter_in_title_does_not_insert_newline() {
-        let mut form = TaskForm::new();
+        let mut form = TaskForm::new(default_theme());
         form.handle_key(key(KeyCode::Char('h')));
         form.handle_key(key(KeyCode::Char('i')));
         form.handle_key(key(KeyCode::Enter)); // should be ignored
@@ -237,7 +246,7 @@ mod tests {
 
     #[test]
     fn with_values_prepopulates_fields() {
-        let form = TaskForm::with_values("My Title", "Line 1\nLine 2");
+        let form = TaskForm::with_values("My Title", "Line 1\nLine 2", default_theme());
         let (title, body) = form.values();
         assert_eq!(title, "My Title");
         assert!(body.contains("Line 1"));
@@ -246,7 +255,7 @@ mod tests {
 
     #[test]
     fn values_empty_on_new_form() {
-        let form = TaskForm::new();
+        let form = TaskForm::new(default_theme());
         let (title, body) = form.values();
         assert!(title.is_empty());
         assert!(body.trim().is_empty());

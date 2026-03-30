@@ -4,6 +4,7 @@ use clap::Args;
 use crossterm::event::{self, Event, KeyEventKind};
 
 use crate::db::Store;
+use crate::theme::Theme;
 use crate::tui::{
     self,
     form::{FormOutcome, TaskForm},
@@ -22,9 +23,13 @@ pub struct AddArgs {
     /// Add to the global task list instead of the current project.
     #[arg(short, long)]
     pub global: bool,
+
+    /// Add one or more tags to the task (can be repeated).
+    #[arg(long = "tag", value_name = "TAG")]
+    pub tags: Vec<String>,
 }
 
-pub fn run(args: &AddArgs, store: &mut dyn Store, cwd: &Path) -> anyhow::Result<()> {
+pub fn run(args: &AddArgs, store: &mut dyn Store, cwd: &Path, theme: &Theme) -> anyhow::Result<()> {
     let project_id = if args.global {
         None
     } else {
@@ -51,14 +56,19 @@ pub fn run(args: &AddArgs, store: &mut dyn Store, cwd: &Path) -> anyhow::Result<
         }
         None => {
             // Open the TUI form.
-            match run_form()? {
+            match run_form(theme)? {
                 Some(c) => c,
                 None => return Ok(()), // user cancelled
             }
         }
     };
 
-    let task = store.add_task(project_id, &content, parent_id)?;
+    let mut task = store.add_task(project_id, &content, parent_id)?;
+
+    if !args.tags.is_empty() {
+        task.tags = args.tags.clone();
+        store.update_task(&task)?;
+    }
 
     let scope = match project_id {
         Some(_) => "project".to_string(),
@@ -72,9 +82,9 @@ pub fn run(args: &AddArgs, store: &mut dyn Store, cwd: &Path) -> anyhow::Result<
 
 /// Open the two-field TUI form. Returns the composed content string on submit,
 /// or `None` if the user cancelled.
-fn run_form() -> anyhow::Result<Option<String>> {
+fn run_form(theme: &Theme) -> anyhow::Result<Option<String>> {
     let mut guard = tui::enter()?;
-    let mut form = TaskForm::new();
+    let mut form = TaskForm::new(theme.clone());
 
     loop {
         guard.terminal.draw(|frame| {

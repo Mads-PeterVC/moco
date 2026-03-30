@@ -2,7 +2,7 @@ use std::path::Path;
 use uuid::Uuid;
 
 use crate::error::MocoError;
-use crate::models::{Project, Task};
+use crate::models::{Note, Project, Task};
 
 /// Abstraction over the persistence backend.
 ///
@@ -22,6 +22,12 @@ pub trait Store {
 
     /// Return all registered projects.
     fn list_projects(&self) -> Result<Vec<Project>, MocoError>;
+
+    /// Persist changes to an existing project (e.g. updated labels).
+    fn update_project(&mut self, project: &Project) -> Result<(), MocoError>;
+
+    /// Delete a project and all its tasks and notes atomically.
+    fn delete_project(&mut self, project: &Project) -> Result<(), MocoError>;
 
     // ── Tasks ────────────────────────────────────────────────────────────────
 
@@ -43,6 +49,16 @@ pub trait Store {
     /// Return all tasks for a project (or global list), ordered by display_index.
     fn list_tasks(&self, project_id: Option<Uuid>) -> Result<Vec<Task>, MocoError>;
 
+    /// Return all tasks across ALL projects that have the given label (cross-project view).
+    fn list_tasks_by_label(&self, label: &str) -> Result<Vec<(Project, Vec<Task>)>, MocoError>;
+
+    /// Return tasks filtered by tag within a project scope.
+    fn list_tasks_by_tag(
+        &self,
+        project_id: Option<Uuid>,
+        tag: &str,
+    ) -> Result<Vec<Task>, MocoError>;
+
     /// Persist changes to an existing task (identified by `task.id`).
     fn update_task(&mut self, task: &Task) -> Result<(), MocoError>;
 
@@ -59,6 +75,32 @@ pub trait Store {
     /// in the given scope, ordered by their current display_index.
     fn reindex_open_tasks(&mut self, project_id: Option<Uuid>) -> Result<(), MocoError>;
 
-    /// Delete a project and all its tasks atomically.
-    fn delete_project(&mut self, project: &Project) -> Result<(), MocoError>;
+    // ── Notes ────────────────────────────────────────────────────────────────
+
+    /// Add a note to a project (or the global list when `project_id` is `None`).
+    fn add_note(
+        &mut self,
+        project_id: Option<Uuid>,
+        title: &str,
+        content: &str,
+    ) -> Result<Note, MocoError>;
+
+    /// Retrieve a note by its display index within the given scope.
+    fn get_note(
+        &self,
+        project_id: Option<Uuid>,
+        display_index: u32,
+    ) -> Result<Option<Note>, MocoError>;
+
+    /// Return all notes for a project (or global list), ordered by display_index.
+    fn list_notes(&self, project_id: Option<Uuid>) -> Result<Vec<Note>, MocoError>;
+
+    /// Persist changes to an existing note (identified by `note.id`).
+    fn update_note(&mut self, note: &Note) -> Result<(), MocoError>;
+
+    /// Delete a note by its UUID.
+    fn delete_note(&mut self, note_id: Uuid) -> Result<(), MocoError>;
+
+    /// Return the next available display index for notes in the given scope.
+    fn next_note_display_index(&self, project_id: Option<Uuid>) -> Result<u32, MocoError>;
 }

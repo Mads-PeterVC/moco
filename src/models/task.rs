@@ -38,6 +38,9 @@ pub struct Task {
     pub deferred_index: Option<u32>,
     /// Parent task UUID for subtasks.
     pub parent_id: Option<Uuid>,
+    /// Free-form keyword tags for filtering (e.g. "urgent", "frontend").
+    #[serde(default)]
+    pub tags: Vec<String>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -60,6 +63,7 @@ impl Task {
             completed_index: None,
             deferred_index: None,
             parent_id,
+            tags: Vec::new(),
             created_at: now,
             updated_at: now,
         }

@@ -2,12 +2,13 @@ use crossterm::event::KeyEvent;
 use ratatui::{
     Frame,
     layout::Rect,
-    style::{Color, Modifier, Style},
+    style::{Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, List, ListItem, ListState, Paragraph},
 };
 
 use crate::models::Project;
+use crate::theme::Theme;
 use crate::tui::keys;
 use crate::tui::scroll_list::ScrollList;
 
@@ -67,24 +68,58 @@ impl ProjectBrowser {
     }
 
     /// Render the browser into the given area.
-    pub fn render(&mut self, frame: &mut Frame, area: Rect, projects: &[Project]) {
+    ///
+    /// `projects` is a slice of `(project, open_task_count)` pairs.
+    pub fn render(
+        &mut self,
+        frame: &mut Frame,
+        area: Rect,
+        projects: &[(Project, usize)],
+        theme: &Theme,
+    ) {
         let items: Vec<ListItem> = projects
             .iter()
-            .map(|p| {
-                let name = &p.name;
+            .map(|(p, open_count)| {
                 let path = p.path.display().to_string();
-                let path_preview = if path.len() > 50 {
-                    format!("…{}", &path[path.len() - 50..])
+                let path_preview = if path.len() > 45 {
+                    format!("…{}", &path[path.len() - 45..])
                 } else {
                     path
                 };
-                ListItem::new(Line::from(vec![
+
+                // Line 1: bold name + dimmed path.
+                let line1 = Line::from(vec![
                     Span::styled(
-                        format!("{:<20}", name),
+                        format!("{:<20}", p.name),
                         Style::default().add_modifier(Modifier::BOLD),
                     ),
-                    Span::styled(path_preview, Style::default().fg(Color::DarkGray)),
-                ]))
+                    Span::styled(
+                        path_preview,
+                        Style::default().fg(theme.accent),
+                    ),
+                ]);
+
+                // Line 2: labels (if any) then open task count.
+                let mut line2: Vec<Span> = vec![Span::raw("  ")];
+                for label in &p.labels {
+                    line2.push(Span::styled(
+                        format!("[{}] ", label),
+                        Style::default()
+                            .fg(theme.accent)
+                            .add_modifier(Modifier::BOLD),
+                    ));
+                }
+                let count_text = match open_count {
+                    0 => "no open tasks".to_string(),
+                    1 => "1 open task".to_string(),
+                    n => format!("{n} open tasks"),
+                };
+                line2.push(Span::styled(
+                    count_text,
+                    Style::default().fg(theme.open),
+                ));
+
+                ListItem::new(vec![line1, Line::from(line2)])
             })
             .collect();
 
@@ -99,7 +134,7 @@ impl ProjectBrowser {
             )
             .highlight_style(
                 Style::default()
-                    .bg(Color::DarkGray)
+                    .bg(theme.selection_bg)
                     .add_modifier(Modifier::BOLD),
             )
             .highlight_symbol("▶ ");
@@ -117,15 +152,16 @@ impl ProjectBrowser {
                 Span::styled("↑↓", Style::default().add_modifier(Modifier::BOLD)),
                 Span::raw(" navigate  "),
                 Span::styled("Enter", Style::default().add_modifier(Modifier::BOLD)),
-                Span::raw(" open  "),
+                Span::raw(" select  "),
                 Span::styled("Esc", Style::default().add_modifier(Modifier::BOLD)),
                 Span::raw(" cancel"),
             ]))
-            .style(Style::default().fg(Color::DarkGray));
+            .style(Style::default().fg(theme.accent));
             frame.render_widget(help, help_area);
         }
     }
 }
+
 
 #[cfg(test)]
 mod tests {

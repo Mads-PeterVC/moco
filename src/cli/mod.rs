@@ -4,9 +4,13 @@ pub mod delete;
 pub mod edit;
 pub mod export;
 pub mod init;
+pub mod label;
 pub mod list;
+pub mod note;
 pub mod open;
+pub mod project;
 pub mod status;
+pub mod tag;
 
 use clap::{Parser, Subcommand};
 
@@ -19,30 +23,20 @@ pub struct Cli {
 
 #[derive(Subcommand)]
 pub enum Command {
-    /// Initialize a project for the current directory.
-    Init(init::InitArgs),
-
+    /// Manage projects: init, delete, open, label, export, move.
+    Project(project::ProjectArgs),
     /// Add a new task to the current project (or global list).
     Add(add::AddArgs),
-
     /// Edit an existing task.
     Edit(edit::EditArgs),
-
     /// Update the status or progress of a task.
     Status(status::StatusArgs),
-
     /// List tasks for the current project (or global list).
     List(list::ListArgs),
-
-    /// Export tasks to a Markdown file.
-    Export(export::ExportArgs),
-
-    /// Open a registered project in your configured editor.
-    Open(open::OpenArgs),
-
-    /// Delete a registered project and all its tasks.
-    Delete(delete::DeleteArgs),
-
+    /// Manage tags on tasks.
+    Tag(tag::TagArgs),
+    /// Manage notes for the current project (or global list).
+    Note(note::NoteArgs),
     /// Manage moco configuration.
     Config(config::ConfigArgs),
 }

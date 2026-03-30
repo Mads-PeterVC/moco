@@ -3,6 +3,8 @@ use std::io::{self, Write};
 use clap::Args;
 
 use crate::db::Store;
+use crate::models::TaskStatus;
+use crate::theme::Theme;
 use crate::tui::{self, project_browser::{ProjectBrowser, ProjectBrowserOutcome}};
 
 #[derive(Args)]
@@ -17,30 +19,44 @@ pub struct DeleteArgs {
     pub project_path: Option<std::path::PathBuf>,
 }
 
-pub fn run(args: &DeleteArgs, store: &mut impl Store) -> anyhow::Result<()> {
+pub fn run(args: &DeleteArgs, store: &mut impl Store, theme: &Theme) -> anyhow::Result<()> {
     let projects = store.list_projects()?;
 
     if projects.is_empty() {
         anyhow::bail!(
-            "No projects registered. Run `moco init <name>` inside a project directory first."
+            "No projects registered. Run `moco project init <name>` inside a project directory first."
         );
     }
+
+    // Pre-compute (project, open_task_count) pairs for the browser.
+    let summaries: Vec<(crate::models::Project, usize)> = projects
+        .into_iter()
+        .map(|p| {
+            let open = store
+                .list_tasks(Some(p.id))
+                .unwrap_or_default()
+                .into_iter()
+                .filter(|t| t.status == TaskStatus::Open)
+                .count();
+            (p, open)
+        })
+        .collect();
 
     // Resolve the target project — TUI browser or direct path.
     let project = if let Some(path) = &args.project_path {
         let canonical = path.canonicalize().unwrap_or_else(|_| path.clone());
-        projects
+        summaries
             .into_iter()
-            .find(|p| p.path == canonical)
+            .find(|(p, _)| p.path == canonical)
+            .map(|(p, _)| p)
             .ok_or_else(|| anyhow::anyhow!("No project registered at {}", path.display()))?
     } else {
         let mut guard = tui::enter()?;
-        let mut browser = ProjectBrowser::new(projects.len());
+        let mut browser = ProjectBrowser::new(summaries.len());
 
         let selected_idx = loop {
-            let proj_ref = &projects;
             guard.terminal.draw(|frame| {
-                browser.render(frame, frame.area(), proj_ref);
+                browser.render(frame, frame.area(), &summaries, theme);
             })?;
 
             if let crossterm::event::Event::Key(key) = crossterm::event::read()? {
@@ -57,7 +73,7 @@ pub fn run(args: &DeleteArgs, store: &mut impl Store) -> anyhow::Result<()> {
         };
 
         drop(guard);
-        projects.into_iter().nth(selected_idx).expect("index in bounds")
+        summaries.into_iter().nth(selected_idx).map(|(p, _)| p).expect("index in bounds")
     };
 
     // Count tasks so the user knows what they're deleting.

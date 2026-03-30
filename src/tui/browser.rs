@@ -2,12 +2,13 @@ use crossterm::event::KeyEvent;
 use ratatui::{
     Frame,
     layout::Rect,
-    style::{Color, Modifier, Style},
+    style::{Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, List, ListItem, ListState, Paragraph},
 };
 
 use crate::models::{Task, TaskStatus};
+use crate::theme::Theme;
 use crate::tui::keys;
 use crate::tui::scroll_list::ScrollList;
 
@@ -67,7 +68,7 @@ impl TaskBrowser {
     }
 
     /// Render the browser into the given area.
-    pub fn render(&mut self, frame: &mut Frame, area: Rect, tasks: &[Task]) {
+    pub fn render(&mut self, frame: &mut Frame, area: Rect, tasks: &[Task], theme: &Theme) {
         let items: Vec<ListItem> = tasks
             .iter()
             .map(|t| {
@@ -80,9 +81,9 @@ impl TaskBrowser {
                     preview.to_string()
                 };
                 let status_color = match t.status {
-                    TaskStatus::Open => Color::White,
-                    TaskStatus::Complete => Color::Green,
-                    TaskStatus::Defer => Color::Yellow,
+                    TaskStatus::Open => theme.open,
+                    TaskStatus::Complete => theme.complete,
+                    TaskStatus::Defer => theme.defer,
                 };
                 ListItem::new(Line::from(vec![
                     Span::styled(
@@ -106,7 +107,7 @@ impl TaskBrowser {
             )
             .highlight_style(
                 Style::default()
-                    .bg(Color::DarkGray)
+                    .bg(theme.selection_bg)
                     .add_modifier(Modifier::BOLD),
             )
             .highlight_symbol("▶ ");
@@ -129,7 +130,7 @@ impl TaskBrowser {
                 Span::styled("Esc", Style::default().add_modifier(Modifier::BOLD)),
                 Span::raw(" cancel"),
             ]))
-            .style(Style::default().fg(Color::DarkGray));
+            .style(Style::default().fg(theme.selection_bg));
             frame.render_widget(help, help_area);
         }
     }

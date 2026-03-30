@@ -5,7 +5,8 @@ use clap::Args;
 use crate::config::AppConfig;
 use crate::db::Store;
 use crate::error::MocoError;
-use crate::models::{Task, TaskStatus};
+use crate::models::{Note, Task, TaskStatus};
+use crate::theme;
 use crate::workspace;
 
 #[derive(Args)]
@@ -20,6 +21,7 @@ pub fn run(
     store: &dyn Store,
     cwd: &Path,
     config: &AppConfig,
+    theme: &theme::Theme,
 ) -> anyhow::Result<()> {
     let (project_id, output_path, title) = if args.global {
         let path = config.moco_dir.join("global.md");
@@ -33,16 +35,17 @@ pub fn run(
     };
 
     let tasks = store.list_tasks(project_id)?;
-    let markdown = render_markdown(&title, &tasks);
+    let notes = store.list_notes(project_id)?;
+    let markdown = render_markdown(&title, &tasks, &notes);
 
     std::fs::write(&output_path, &markdown)?;
-    println!("Exported to {}", output_path.display());
+    println!("Exported to {}", theme.paint(output_path.display(), theme.accent));
 
     Ok(())
 }
 
-/// Render tasks as a Markdown document.
-pub fn render_markdown(title: &str, tasks: &[Task]) -> String {
+/// Render tasks and notes as a Markdown document.
+pub fn render_markdown(title: &str, tasks: &[Task], notes: &[Note]) -> String {
     let mut out = String::new();
     out.push_str(&format!("# {}\n\n", title));
 
@@ -68,6 +71,20 @@ pub fn render_markdown(title: &str, tasks: &[Task]) -> String {
         out.push('\n');
     }
 
+    if !notes.is_empty() {
+        out.push_str("## Notes\n\n");
+        for note in notes {
+            out.push_str(&format!("### {} {}\n", note.display_id(), note.title));
+            if !note.content.is_empty() {
+                out.push_str(&note.content);
+                if !note.content.ends_with('\n') {
+                    out.push('\n');
+                }
+            }
+            out.push('\n');
+        }
+    }
+
     out
 }
 
@@ -85,14 +102,20 @@ fn render_task_list(out: &mut String, section: &[&Task], all_tasks: &[Task], dep
         let id = task.display_id();
         let title = task.content.lines().next().unwrap_or("").trim();
         let body_lines: Vec<&str> = task.content.lines().skip(1).collect();
+        let tags = if task.tags.is_empty() {
+            String::new()
+        } else {
+            format!(" [{}]", task.tags.join(" "))
+        };
 
         out.push_str(&format!(
-            "{}- {} {} {} ({}%)\n",
+            "{}- {} {} {} ({}%){}\n",
             indent,
             checkbox,
             id,
             title,
-            task.progress
+            task.progress,
+            tags,
         ));
 
         // Append body lines as a blockquote continuation.
@@ -144,14 +167,14 @@ mod tests {
 
     #[test]
     fn render_markdown_has_title() {
-        let md = render_markdown("My Project", &[]);
+        let md = render_markdown("My Project", &[], &[]);
         assert!(md.starts_with("# My Project\n"));
     }
 
     #[test]
     fn render_markdown_open_section() {
         let tasks = vec![open_task("Fix the bug", 1)];
-        let md = render_markdown("Proj", &tasks);
+        let md = render_markdown("Proj", &tasks, &[]);
         assert!(md.contains("## Open"));
         assert!(md.contains("[ ]"));
         assert!(md.contains("Fix the bug"));
@@ -160,7 +183,7 @@ mod tests {
     #[test]
     fn render_markdown_completed_section() {
         let tasks = vec![completed_task("Done task", 1)];
-        let md = render_markdown("Proj", &tasks);
+        let md = render_markdown("Proj", &tasks, &[]);
         assert!(md.contains("## Completed"));
         assert!(md.contains("[x]"));
     }
@@ -168,7 +191,7 @@ mod tests {
     #[test]
     fn render_markdown_deferred_section() {
         let tasks = vec![deferred_task("Later task", 1)];
-        let md = render_markdown("Proj", &tasks);
+        let md = render_markdown("Proj", &tasks, &[]);
         assert!(md.contains("## Deferred"));
         assert!(md.contains("[-]"));
     }
@@ -179,7 +202,7 @@ mod tests {
         let mut child = Task::new(None, "Child", 2, None);
         child.parent_id = Some(parent.id);
         let tasks = vec![parent.clone(), child];
-        let md = render_markdown("Proj", &tasks);
+        let md = render_markdown("Proj", &tasks, &[]);
         // Child should appear indented (two spaces before the list marker).
         assert!(md.contains("  - "));
         assert!(md.contains("Child"));

@@ -5,6 +5,7 @@ use directories::UserDirs;
 use serde::{Deserialize, Serialize};
 
 use crate::error::MocoError;
+use crate::theme::ThemeConfig;
 
 const DEFAULT_CONFIG_TEMPLATE: &str = r#"# moco configuration
 #
@@ -12,6 +13,18 @@ const DEFAULT_CONFIG_TEMPLATE: &str = r#"# moco configuration
 # Falls back to the $EDITOR environment variable if not set.
 #
 # open_with = "code"
+
+# [theme]
+# preset = "moco"  # moco (default) | default | dracula | nord | solarized-dark
+#
+# [theme.colors]  # override individual colours (all optional)
+# open            = "light_green"
+# complete        = "green"
+# defer           = "148"        # indexed 256-colour (yellow-green)
+# accent          = "light_green"
+# selection_bg    = "22"         # indexed 256-colour (dark forest green)
+# progress_filled = "green"
+# progress_empty  = "22"
 "#;
 
 /// User-editable preferences loaded from `~/.moco/config.toml`.
@@ -20,6 +33,9 @@ pub struct MocoConfig {
     /// Command to open a project directory (e.g. `"code"`, `"vim"`).
     /// Falls back to `$EDITOR` if `None`.
     pub open_with: Option<String>,
+    /// Colour theme configuration.
+    #[serde(default)]
+    pub theme: ThemeConfig,
 }
 
 impl MocoConfig {
@@ -133,16 +149,29 @@ mod tests {
     }
 
     #[test]
+    fn moco_config_parses_theme_preset() {
+        let tmp = TempDir::new().unwrap();
+        std::fs::write(
+            tmp.path().join("config.toml"),
+            "[theme]\npreset = \"dracula\"\n",
+        )
+        .unwrap();
+        let config = MocoConfig::load(tmp.path()).expect("load should succeed");
+        assert_eq!(config.theme.preset, crate::theme::Preset::Dracula);
+    }
+
+    #[test]
     fn resolve_open_command_uses_open_with_field() {
         let config = MocoConfig {
             open_with: Some("code".to_string()),
+            ..Default::default()
         };
         assert_eq!(config.resolve_open_command().unwrap(), "code");
     }
 
     #[test]
     fn resolve_open_command_falls_back_to_editor_env() {
-        let config = MocoConfig { open_with: None };
+        let config = MocoConfig::default();
         // Only testable when $EDITOR is set; skip if not.
         if std::env::var("EDITOR").is_ok() {
             assert!(config.resolve_open_command().is_ok());

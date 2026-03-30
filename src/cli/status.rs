@@ -5,6 +5,7 @@ use clap::Args;
 use crate::db::Store;
 use crate::error::MocoError;
 use crate::models::TaskStatus;
+use crate::theme::Theme;
 use crate::workspace;
 
 #[derive(Args)]
@@ -47,7 +48,7 @@ fn parse_status_value(raw: &str) -> Result<StatusValue, MocoError> {
     }
 }
 
-pub fn run(args: &StatusArgs, store: &mut dyn Store, cwd: &Path) -> anyhow::Result<()> {
+pub fn run(args: &StatusArgs, store: &mut dyn Store, cwd: &Path, theme: &Theme) -> anyhow::Result<()> {
     let project_id = if args.global {
         None
     } else {
@@ -65,7 +66,11 @@ pub fn run(args: &StatusArgs, store: &mut dyn Store, cwd: &Path) -> anyhow::Resu
             task.progress = pct;
             task.updated_at = chrono::Utc::now();
             store.update_task(&task)?;
-            println!("Task {} progress set to {}%.", task.display_id(), pct);
+            println!(
+                "Task {} progress set to {}%.",
+                theme.paint(task.display_id(), theme.open),
+                theme.paint(pct, theme.accent),
+            );
         }
         StatusValue::Complete => {
             let completed_index = store.next_completed_index(project_id)?;
@@ -76,7 +81,11 @@ pub fn run(args: &StatusArgs, store: &mut dyn Store, cwd: &Path) -> anyhow::Resu
             task.updated_at = chrono::Utc::now();
             store.update_task(&task)?;
             store.reindex_open_tasks(project_id)?;
-            println!("Task marked complete → {}.", task.display_id());
+            println!(
+                "Task marked {} → {}.",
+                theme.paint("complete", theme.complete),
+                theme.paint(task.display_id(), theme.complete),
+            );
         }
         StatusValue::Defer => {
             let deferred_index = store.next_deferred_index(project_id)?;
@@ -86,7 +95,11 @@ pub fn run(args: &StatusArgs, store: &mut dyn Store, cwd: &Path) -> anyhow::Resu
             task.updated_at = chrono::Utc::now();
             store.update_task(&task)?;
             store.reindex_open_tasks(project_id)?;
-            println!("Task deferred → {}.", task.display_id());
+            println!(
+                "Task {} → {}.",
+                theme.paint("deferred", theme.defer),
+                theme.paint(task.display_id(), theme.defer),
+            );
         }
     }
 

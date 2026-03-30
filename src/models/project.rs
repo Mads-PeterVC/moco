@@ -10,6 +10,9 @@ pub struct Project {
     pub name: String,
     /// Canonical absolute path to the workspace root.
     pub path: PathBuf,
+    /// User-defined labels for cross-project categorisation (e.g. "work", "personal").
+    #[serde(default)]
+    pub labels: Vec<String>,
     pub created_at: DateTime<Utc>,
 }
 
@@ -19,6 +22,7 @@ impl Project {
             id: Uuid::new_v4(),
             name: name.into(),
             path,
+            labels: Vec::new(),
             created_at: Utc::now(),
         }
     }

@@ -5,13 +5,16 @@ use uuid::Uuid;
 
 use crate::db::Store;
 use crate::error::MocoError;
-use crate::models::{Project, Task, TaskStatus};
+use crate::models::{Note, Project, Task, TaskStatus};
 
 /// redb table: canonical path (string) → JSON-encoded Project
 const PROJECTS: TableDefinition<&str, &str> = TableDefinition::new("projects");
 
 /// redb table: "<project_id_or_global>/<task_uuid>" → JSON-encoded Task
 const TASKS: TableDefinition<&str, &str> = TableDefinition::new("tasks");
+
+/// redb table: "<project_id_or_global>/<note_uuid>" → JSON-encoded Note
+const NOTES: TableDefinition<&str, &str> = TableDefinition::new("notes");
 
 /// The global scope key used when no project is registered.
 const GLOBAL_SCOPE: &str = "global";
@@ -25,6 +28,10 @@ fn scope_key(project_id: Option<Uuid>) -> String {
 
 fn task_key(project_id: Option<Uuid>, task_id: Uuid) -> String {
     format!("{}/{}", scope_key(project_id), task_id)
+}
+
+fn note_key(project_id: Option<Uuid>, note_id: Uuid) -> String {
+    format!("{}/{}", scope_key(project_id), note_id)
 }
 
 /// `redb`-backed implementation of [`Store`].
@@ -45,6 +52,7 @@ impl RedbStore {
         let tx = self.db.begin_write()?;
         tx.open_table(PROJECTS)?;
         tx.open_table(TASKS)?;
+        tx.open_table(NOTES)?;
         tx.commit()?;
         Ok(())
     }
@@ -97,6 +105,19 @@ impl Store for RedbStore {
             projects.push(Self::deserialize::<Project>(v.value())?);
         }
         Ok(projects)
+    }
+
+    fn update_project(&mut self, project: &Project) -> Result<(), MocoError> {
+        let key = project.path.to_string_lossy().to_string();
+        let value = Self::serialize(project)?;
+
+        let tx = self.db.begin_write()?;
+        {
+            let mut table = tx.open_table(PROJECTS)?;
+            table.insert(key.as_str(), value.as_str())?;
+        }
+        tx.commit()?;
+        Ok(())
     }
 
     // ── Tasks ─────────────────────────────────────────────────────────────────
@@ -217,33 +238,168 @@ impl Store for RedbStore {
         Ok(())
     }
 
+    fn list_tasks_by_label(&self, label: &str) -> Result<Vec<(Project, Vec<Task>)>, MocoError> {
+        let projects = self.list_projects()?;
+        let mut result = Vec::new();
+
+        for project in projects {
+            if project.labels.iter().any(|l| l == label) {
+                let tasks = self.list_tasks(Some(project.id))?;
+                result.push((project, tasks));
+            }
+        }
+
+        Ok(result)
+    }
+
+    fn list_tasks_by_tag(
+        &self,
+        project_id: Option<Uuid>,
+        tag: &str,
+    ) -> Result<Vec<Task>, MocoError> {
+        let tasks = self.list_tasks(project_id)?;
+        Ok(tasks
+            .into_iter()
+            .filter(|t| t.tags.iter().any(|tg| tg == tag))
+            .collect())
+    }
+
     fn delete_project(&mut self, project: &Project) -> Result<(), MocoError> {
         let project_key = project.path.to_string_lossy().to_string();
-        let task_prefix = format!("{}/", project.id);
+        let scope_prefix = format!("{}/", project.id);
 
         let tx = self.db.begin_write()?;
         {
             let mut projects_table = tx.open_table(PROJECTS)?;
             projects_table.remove(project_key.as_str())?;
 
+            // Delete all tasks for this project.
             let mut tasks_table = tx.open_table(TASKS)?;
-            // Collect keys first to avoid holding a borrow while mutating.
-            let keys_to_delete: Vec<String> = tasks_table
+            let task_keys: Vec<String> = tasks_table
                 .iter()?
                 .filter_map(|entry| {
                     let (k, _) = entry.ok()?;
                     let key = k.value().to_string();
-                    if key.starts_with(&task_prefix) { Some(key) } else { None }
+                    if key.starts_with(&scope_prefix) { Some(key) } else { None }
                 })
                 .collect();
-
-            for key in keys_to_delete {
+            for key in task_keys {
                 tasks_table.remove(key.as_str())?;
+            }
+
+            // Delete all notes for this project.
+            let mut notes_table = tx.open_table(NOTES)?;
+            let note_keys: Vec<String> = notes_table
+                .iter()?
+                .filter_map(|entry| {
+                    let (k, _) = entry.ok()?;
+                    let key = k.value().to_string();
+                    if key.starts_with(&scope_prefix) { Some(key) } else { None }
+                })
+                .collect();
+            for key in note_keys {
+                notes_table.remove(key.as_str())?;
             }
         }
         tx.commit()?;
 
         Ok(())
+    }
+
+    // ── Notes ─────────────────────────────────────────────────────────────────
+
+    fn add_note(
+        &mut self,
+        project_id: Option<Uuid>,
+        title: &str,
+        content: &str,
+    ) -> Result<Note, MocoError> {
+        let display_index = self.next_note_display_index(project_id)?;
+        let note = Note::new(project_id, title, content, display_index);
+        let key = note_key(project_id, note.id);
+        let value = Self::serialize(&note)?;
+
+        let tx = self.db.begin_write()?;
+        {
+            let mut table = tx.open_table(NOTES)?;
+            table.insert(key.as_str(), value.as_str())?;
+        }
+        tx.commit()?;
+
+        Ok(note)
+    }
+
+    fn get_note(
+        &self,
+        project_id: Option<Uuid>,
+        display_index: u32,
+    ) -> Result<Option<Note>, MocoError> {
+        let notes = self.list_notes(project_id)?;
+        Ok(notes.into_iter().find(|n| n.display_index == display_index))
+    }
+
+    fn list_notes(&self, project_id: Option<Uuid>) -> Result<Vec<Note>, MocoError> {
+        let prefix = format!("{}/", scope_key(project_id));
+        let tx = self.db.begin_read()?;
+        let table = tx.open_table(NOTES)?;
+
+        let mut notes: Vec<Note> = Vec::new();
+        for entry in table.iter()? {
+            let (k, v) = entry?;
+            if k.value().starts_with(&prefix) {
+                notes.push(Self::deserialize::<Note>(v.value())?);
+            }
+        }
+
+        notes.sort_by_key(|n| n.display_index);
+        Ok(notes)
+    }
+
+    fn update_note(&mut self, note: &Note) -> Result<(), MocoError> {
+        let key = note_key(note.project_id, note.id);
+        let value = Self::serialize(note)?;
+
+        let tx = self.db.begin_write()?;
+        {
+            let mut table = tx.open_table(NOTES)?;
+            table.insert(key.as_str(), value.as_str())?;
+        }
+        tx.commit()?;
+
+        Ok(())
+    }
+
+    fn delete_note(&mut self, note_id: Uuid) -> Result<(), MocoError> {
+        // Notes can be in any scope; scan all to find by id.
+        let tx = self.db.begin_write()?;
+        {
+            let mut table = tx.open_table(NOTES)?;
+            let key_to_delete: Option<String> = table
+                .iter()?
+                .filter_map(|entry| {
+                    let (k, v) = entry.ok()?;
+                    let note: Note = Self::deserialize(v.value()).ok()?;
+                    if note.id == note_id {
+                        Some(k.value().to_string())
+                    } else {
+                        None
+                    }
+                })
+                .next();
+
+            if let Some(key) = key_to_delete {
+                table.remove(key.as_str())?;
+            }
+        }
+        tx.commit()?;
+
+        Ok(())
+    }
+
+    fn next_note_display_index(&self, project_id: Option<Uuid>) -> Result<u32, MocoError> {
+        let notes = self.list_notes(project_id)?;
+        let max = notes.iter().map(|n| n.display_index).max().unwrap_or(0);
+        Ok(max + 1)
     }
 }
 

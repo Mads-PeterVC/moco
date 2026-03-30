@@ -5,6 +5,7 @@ use crossterm::event::{self, Event, KeyEventKind};
 
 use crate::db::Store;
 use crate::error::MocoError;
+use crate::theme::Theme;
 use crate::tui::{
     self,
     browser::{BrowserOutcome, TaskBrowser},
@@ -34,7 +35,7 @@ pub struct EditArgs {
     pub global: bool,
 }
 
-pub fn run(args: &EditArgs, store: &mut dyn Store, cwd: &Path) -> anyhow::Result<()> {
+pub fn run(args: &EditArgs, store: &mut dyn Store, cwd: &Path, theme: &Theme) -> anyhow::Result<()> {
     let project_id = if args.global {
         None
     } else {
@@ -78,7 +79,7 @@ pub fn run(args: &EditArgs, store: &mut dyn Store, cwd: &Path) -> anyhow::Result
             println!("No tasks to edit.");
             return Ok(());
         }
-        let selected_index = run_browser(&tasks)?;
+        let selected_index = run_browser(&tasks, theme)?;
         match selected_index {
             None => return Ok(()), // cancelled
             Some(i) => {
@@ -106,7 +107,7 @@ pub fn run(args: &EditArgs, store: &mut dyn Store, cwd: &Path) -> anyhow::Result
     let existing_title = lines.next().unwrap_or("").trim().to_string();
     let existing_body = lines.next().unwrap_or("").to_string();
 
-    let (new_title, new_body) = run_form(existing_title, existing_body)?;
+    let (new_title, new_body) = run_form(existing_title, existing_body, theme)?;
 
     if new_title.is_none() {
         // User cancelled.
@@ -127,14 +128,14 @@ pub fn run(args: &EditArgs, store: &mut dyn Store, cwd: &Path) -> anyhow::Result
 }
 
 /// Run the task browser TUI, returning the selected task index or None if cancelled.
-fn run_browser(tasks: &[crate::models::Task]) -> anyhow::Result<Option<usize>> {
+fn run_browser(tasks: &[crate::models::Task], theme: &Theme) -> anyhow::Result<Option<usize>> {
     let mut guard = tui::enter()?;
     let mut browser = TaskBrowser::new(tasks.len());
 
     loop {
         let tasks_ref = tasks;
         guard.terminal.draw(|frame| {
-            browser.render(frame, frame.area(), tasks_ref);
+            browser.render(frame, frame.area(), tasks_ref, theme);
         })?;
 
         if let Event::Key(key) = event::read()? {
@@ -155,9 +156,10 @@ fn run_browser(tasks: &[crate::models::Task]) -> anyhow::Result<Option<usize>> {
 fn run_form(
     title: String,
     body: String,
+    theme: &Theme,
 ) -> anyhow::Result<(Option<String>, Option<String>)> {
     let mut guard = tui::enter()?;
-    let mut form = TaskForm::with_values(&title, &body);
+    let mut form = TaskForm::with_values(&title, &body, theme.clone());
 
     loop {
         guard.terminal.draw(|frame| {

@@ -1,25 +1,26 @@
+use std::path::PathBuf;
+
 use clap::Args;
 
-use crate::config::AppConfig;
 use crate::db::Store;
 use crate::models::TaskStatus;
 use crate::theme::Theme;
-use crate::tui::{self, project_browser::{ProjectBrowser, ProjectBrowserOutcome}};
+use crate::tui::{
+    self,
+    project_browser::{ProjectBrowser, ProjectBrowserOutcome},
+};
 
 #[derive(Args)]
-pub struct OpenArgs {
-    /// Print the command that would be run instead of launching the editor.
-    /// Useful for scripting and testing.
-    #[arg(long)]
-    pub dry_run: bool,
+pub struct MoveArgs {
+    /// New directory path for the project. Defaults to the current directory.
+    pub path: Option<PathBuf>,
 
-    /// Directly open the project at this path, bypassing the TUI browser.
-    /// Combined with `--dry-run`, this makes the full flow testable.
+    /// Directly select the project at this path (bypasses TUI — used in tests).
     #[arg(long, value_name = "PATH", hide = true)]
-    pub project_path: Option<std::path::PathBuf>,
+    pub project_path: Option<PathBuf>,
 }
 
-pub fn run(args: &OpenArgs, store: &impl Store, config: &AppConfig, theme: &Theme) -> anyhow::Result<()> {
+pub fn run(args: &MoveArgs, store: &mut impl Store, theme: &Theme) -> anyhow::Result<()> {
     let projects = store.list_projects()?;
 
     if projects.is_empty() {
@@ -42,8 +43,8 @@ pub fn run(args: &OpenArgs, store: &impl Store, config: &AppConfig, theme: &Them
         })
         .collect();
 
-    // If --project-path is given, skip the TUI and resolve directly.
-    let selected_project = if let Some(path) = &args.project_path {
+    // Resolve which project to move — TUI browser or direct path.
+    let mut project = if let Some(path) = &args.project_path {
         let canonical = path.canonicalize().unwrap_or_else(|_| path.clone());
         summaries
             .into_iter()
@@ -51,7 +52,6 @@ pub fn run(args: &OpenArgs, store: &impl Store, config: &AppConfig, theme: &Them
             .map(|(p, _)| p)
             .ok_or_else(|| anyhow::anyhow!("No project registered at {}", path.display()))?
     } else {
-        // Launch the TUI project browser.
         let mut guard = tui::enter()?;
         let mut browser = ProjectBrowser::new(summaries.len());
 
@@ -77,26 +77,42 @@ pub fn run(args: &OpenArgs, store: &impl Store, config: &AppConfig, theme: &Them
         summaries.into_iter().nth(selected_idx).map(|(p, _)| p).expect("index in bounds")
     };
 
-    let open_cmd = config.moco_config.resolve_open_command()?;
-    let project_path = &selected_project.path;
+    // Determine the new path — explicit arg or current directory.
+    let new_path = match &args.path {
+        Some(p) => p
+            .canonicalize()
+            .map_err(|_| anyhow::anyhow!("Path '{}' does not exist.", p.display()))?,
+        None => std::env::current_dir()?,
+    };
 
-    if args.dry_run {
-        println!("{open_cmd} {}", project_path.display());
-    } else {
+    // Guard: reject if another project is already registered at the new path.
+    if let Some(existing) = store.get_project_by_path(&new_path)? {
+        if existing.id != project.id {
+            anyhow::bail!(
+                "Project '{}' is already registered at {}.",
+                existing.name,
+                new_path.display()
+            );
+        }
+        // Same project, same path — nothing to do.
         println!(
-            "Opening '{}' with {}…",
-            selected_project.name, open_cmd
+            "Project {} is already registered at {}.",
+            theme.paint(format!("'{}'", project.name), theme.accent),
+            theme.paint(new_path.display(), theme.accent),
         );
-        std::process::Command::new(&open_cmd)
-            .arg(project_path)
-            .spawn()
-            .map_err(|e| {
-                anyhow::anyhow!(
-                    "Failed to launch `{open_cmd}`: {e}. \
-                     Check `open_with` in ~/.moco/config.toml or set $EDITOR."
-                )
-            })?;
+        return Ok(());
     }
+
+    let old_path = project.path.clone();
+    project.path = new_path.clone();
+    store.update_project(&project)?;
+
+    println!(
+        "Moved project {} from {} to {}.",
+        theme.paint(format!("'{}'", project.name), theme.accent),
+        theme.paint(old_path.display(), theme.open),
+        theme.paint(new_path.display(), theme.accent),
+    );
 
     Ok(())
 }
