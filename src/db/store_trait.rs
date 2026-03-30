@@ -30,6 +30,10 @@ pub trait Store {
     /// writes a new one. Tasks and notes (keyed by project ID) are untouched.
     fn relocate_project(&mut self, old_path: &Path, project: &Project) -> Result<(), MocoError>;
 
+    /// Set `last_active` on the project with the given ID to the current time.
+    /// No-ops silently if the ID is not found (e.g. global task scope).
+    fn touch_project(&mut self, project_id: Uuid) -> Result<(), MocoError>;
+
     /// Delete a project and all its tasks and notes atomically.
     fn delete_project(&mut self, project: &Project) -> Result<(), MocoError>;
 

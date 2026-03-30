@@ -104,6 +104,8 @@ impl Store for RedbStore {
             let (_, v) = entry?;
             projects.push(Self::deserialize::<Project>(v.value())?);
         }
+        // Most recently active first.
+        projects.sort_by(|a, b| b.last_active.cmp(&a.last_active));
         Ok(projects)
     }
 
@@ -135,6 +137,37 @@ impl Store for RedbStore {
         Ok(())
     }
 
+    fn touch_project(&mut self, project_id: Uuid) -> Result<(), MocoError> {
+        let tx = self.db.begin_read()?;
+        let table = tx.open_table(PROJECTS)?;
+
+        // Scan for the project with the matching ID.
+        let mut found: Option<(String, Project)> = None;
+        for entry in table.iter()? {
+            let (k, v) = entry?;
+            let project = Self::deserialize::<Project>(v.value())?;
+            if project.id == project_id {
+                found = Some((k.value().to_string(), project));
+                break;
+            }
+        }
+        drop(table);
+        drop(tx);
+
+        if let Some((key, mut project)) = found {
+            project.last_active = chrono::Utc::now();
+            let value = Self::serialize(&project)?;
+            let tx = self.db.begin_write()?;
+            {
+                let mut table = tx.open_table(PROJECTS)?;
+                table.insert(key.as_str(), value.as_str())?;
+            }
+            tx.commit()?;
+        }
+
+        Ok(())
+    }
+
     // ── Tasks ─────────────────────────────────────────────────────────────────
 
     fn add_task(
@@ -154,6 +187,10 @@ impl Store for RedbStore {
             table.insert(key.as_str(), value.as_str())?;
         }
         tx.commit()?;
+
+        if let Some(pid) = project_id {
+            self.touch_project(pid)?;
+        }
 
         Ok(task)
     }
@@ -196,6 +233,10 @@ impl Store for RedbStore {
             table.insert(key.as_str(), value.as_str())?;
         }
         tx.commit()?;
+
+        if let Some(pid) = task.project_id {
+            self.touch_project(pid)?;
+        }
 
         Ok(())
     }
@@ -574,6 +615,31 @@ mod tests {
         store.update_task(&t).unwrap();
 
         assert_eq!(store.next_deferred_index(None).unwrap(), 2);
+    }
+
+    #[test]
+    fn touch_project_updates_last_active_and_list_sorts_by_recency() {
+        let (_dir, mut store) = temp_store();
+        let p1 = store.create_project("first", &PathBuf::from("/tmp/p1")).unwrap();
+        let p2 = store.create_project("second", &PathBuf::from("/tmp/p2")).unwrap();
+
+        // Touch p1 after a tiny sleep so timestamps differ.
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        store.touch_project(p1.id).unwrap();
+
+        let projects = store.list_projects().unwrap();
+        // p1 was touched last, so it should appear first.
+        assert_eq!(projects[0].name, "first");
+        assert_eq!(projects[1].name, "second");
+        assert!(projects[0].last_active > projects[1].last_active);
+    }
+
+    #[test]
+    fn touch_project_noop_for_unknown_id() {
+        let (_dir, mut store) = temp_store();
+        // Should not error even though the ID doesn't exist.
+        let result = store.touch_project(Uuid::new_v4());
+        assert!(result.is_ok());
     }
 
     #[test]

@@ -7,6 +7,7 @@ use ratatui::{
     widgets::{Block, Borders, List, ListItem, ListState, Paragraph},
 };
 
+use crate::cli::project::list::format_last_active;
 use crate::models::Project;
 use crate::theme::Theme;
 use crate::tui::keys;
@@ -77,6 +78,11 @@ impl ProjectBrowser {
         projects: &[(Project, usize)],
         theme: &Theme,
     ) {
+        let highlight_sym_width = 2usize; // "▶ "
+        let name_col = 20usize;
+        let path_col = 46usize;
+        let fixed = highlight_sym_width + name_col + path_col;
+
         let items: Vec<ListItem> = projects
             .iter()
             .map(|(p, open_count)| {
@@ -87,16 +93,22 @@ impl ProjectBrowser {
                     path
                 };
 
-                // Line 1: bold name + dimmed path.
+                // Line 1: bold name + accent path + right-justified date.
+                let date = format_last_active(&p.last_active);
+                let date_str = format!("[{date}]");
+                let remaining = (area.width as usize).saturating_sub(fixed);
+                let spacer = " ".repeat(remaining.saturating_sub(date_str.len()));
                 let line1 = Line::from(vec![
                     Span::styled(
                         format!("{:<20}", p.name),
                         Style::default().add_modifier(Modifier::BOLD),
                     ),
                     Span::styled(
-                        path_preview,
+                        format!("{:<46}", path_preview),
                         Style::default().fg(theme.accent),
                     ),
+                    Span::raw(spacer),
+                    Span::raw(date_str),
                 ]);
 
                 // Line 2: labels (if any) then open task count.

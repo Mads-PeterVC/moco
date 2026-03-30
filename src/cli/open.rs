@@ -19,7 +19,7 @@ pub struct OpenArgs {
     pub project_path: Option<std::path::PathBuf>,
 }
 
-pub fn run(args: &OpenArgs, store: &impl Store, config: &AppConfig, theme: &Theme) -> anyhow::Result<()> {
+pub fn run(args: &OpenArgs, store: &mut impl Store, config: &AppConfig, theme: &Theme) -> anyhow::Result<()> {
     let projects = store.list_projects()?;
 
     if projects.is_empty() {
@@ -96,6 +96,8 @@ pub fn run(args: &OpenArgs, store: &impl Store, config: &AppConfig, theme: &Them
                      Check `open_with` in ~/.moco/config.toml or set $EDITOR."
                 )
             })?;
+
+        store.touch_project(selected_project.id)?;
     }
 
     Ok(())

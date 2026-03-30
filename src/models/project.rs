@@ -14,16 +14,26 @@ pub struct Project {
     #[serde(default)]
     pub labels: Vec<String>,
     pub created_at: DateTime<Utc>,
+    /// Updated whenever a task is added/modified/completed or the project is opened.
+    /// Existing records without this field default to the Unix epoch (sort last).
+    #[serde(default = "epoch")]
+    pub last_active: DateTime<Utc>,
+}
+
+fn epoch() -> DateTime<Utc> {
+    DateTime::from_timestamp(0, 0).unwrap_or_default()
 }
 
 impl Project {
     pub fn new(name: impl Into<String>, path: PathBuf) -> Self {
+        let now = Utc::now();
         Self {
             id: Uuid::new_v4(),
             name: name.into(),
             path,
             labels: Vec::new(),
-            created_at: Utc::now(),
+            created_at: now,
+            last_active: now,
         }
     }
 }

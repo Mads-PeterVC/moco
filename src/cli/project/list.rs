@@ -1,3 +1,4 @@
+use chrono::{DateTime, Utc};
 use clap::Args;
 
 use crate::db::Store;
@@ -9,6 +10,15 @@ pub struct ListArgs {
     /// Only show projects that have this label.
     #[arg(short, long, value_name = "LABEL")]
     pub label: Option<String>,
+}
+
+/// Format a `last_active` timestamp as `YYYY-MM-DD`, or `"never"` for the epoch sentinel.
+pub fn format_last_active(dt: &DateTime<Utc>) -> String {
+    if dt.timestamp() == 0 {
+        "never".to_string()
+    } else {
+        dt.format("%d-%m-%Y").to_string()
+    }
 }
 
 pub fn run(args: &ListArgs, store: &dyn Store, theme: &Theme) -> anyhow::Result<()> {
@@ -33,8 +43,13 @@ pub fn run(args: &ListArgs, store: &dyn Store, theme: &Theme) -> anyhow::Result<
     println!("Projects ({}):\n", projects.len());
 
     for project in &projects {
-        // ── Name ────────────────────────────────────────────────────────────
-        println!("  {}", theme.paint(&project.name, theme.accent));
+        // ── Name + last active ───────────────────────────────────────────────
+        let date = format_last_active(&project.last_active);
+        println!(
+            "  {} [{}]",
+            theme.paint(&project.name, theme.accent),
+            date,
+        );
 
         // ── Path ────────────────────────────────────────────────────────────
         println!("    {}", project.path.display());
