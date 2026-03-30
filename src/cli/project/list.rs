@@ -1,9 +1,29 @@
+use clap::Args;
+
 use crate::db::Store;
 use crate::models::TaskStatus;
 use crate::theme::Theme;
 
-pub fn run(store: &dyn Store, theme: &Theme) -> anyhow::Result<()> {
-    let projects = store.list_projects()?;
+#[derive(Args)]
+pub struct ListArgs {
+    /// Only show projects that have this label.
+    #[arg(short, long, value_name = "LABEL")]
+    pub label: Option<String>,
+}
+
+pub fn run(args: &ListArgs, store: &dyn Store, theme: &Theme) -> anyhow::Result<()> {
+    let mut projects = store.list_projects()?;
+
+    // Apply label filter when requested.
+    if let Some(filter) = &args.label {
+        let filter_lower = filter.to_lowercase();
+        projects.retain(|p| p.labels.iter().any(|l| l.to_lowercase() == filter_lower));
+
+        if projects.is_empty() {
+            println!("No projects with label '{}'.", filter);
+            return Ok(());
+        }
+    }
 
     if projects.is_empty() {
         println!("No projects registered. Run `moco project init <name>` to get started.");

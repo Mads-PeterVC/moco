@@ -120,6 +120,21 @@ impl Store for RedbStore {
         Ok(())
     }
 
+    fn relocate_project(&mut self, old_path: &Path, project: &Project) -> Result<(), MocoError> {
+        let old_key = old_path.to_string_lossy().to_string();
+        let new_key = project.path.to_string_lossy().to_string();
+        let value = Self::serialize(project)?;
+
+        let tx = self.db.begin_write()?;
+        {
+            let mut table = tx.open_table(PROJECTS)?;
+            table.remove(old_key.as_str())?;
+            table.insert(new_key.as_str(), value.as_str())?;
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
     // ── Tasks ─────────────────────────────────────────────────────────────────
 
     fn add_task(
@@ -559,6 +574,32 @@ mod tests {
         store.update_task(&t).unwrap();
 
         assert_eq!(store.next_deferred_index(None).unwrap(), 2);
+    }
+
+    #[test]
+    fn relocate_project_moves_path_and_preserves_tasks() {
+        let (_dir, mut store) = temp_store();
+        let old_path = PathBuf::from("/tmp/old_home");
+        let new_path = PathBuf::from("/tmp/new_home");
+
+        let project = store.create_project("mover", &old_path).unwrap();
+        store.add_task(Some(project.id), "task A", None).unwrap();
+
+        let mut moved = project.clone();
+        moved.path = new_path.clone();
+        store.relocate_project(&old_path, &moved).unwrap();
+
+        // Old path must be gone.
+        assert!(store.get_project_by_path(&old_path).unwrap().is_none());
+        // New path must be present.
+        let found = store.get_project_by_path(&new_path).unwrap().unwrap();
+        assert_eq!(found.name, "mover");
+        // Exactly one entry in the project list.
+        assert_eq!(store.list_projects().unwrap().len(), 1);
+        // Tasks are preserved under the project ID.
+        let tasks = store.list_tasks(Some(project.id)).unwrap();
+        assert_eq!(tasks.len(), 1);
+        assert_eq!(tasks[0].content, "task A");
     }
 
     #[test]

@@ -1529,14 +1529,16 @@ fn project_move_updates_registered_path() {
         .assert()
         .success();
 
-    // Move it to new_dir (select via --project-path).
+    // Move it to new_dir (select via --project-path, new path via --new-path, skip confirm via --yes).
     moco(&home)
         .args([
             "project",
             "move",
-            new_dir.path().to_str().unwrap(),
             "--project-path",
             old_dir.path().to_str().unwrap(),
+            "--new-path",
+            new_dir.path().to_str().unwrap(),
+            "--yes",
         ])
         .assert()
         .success()
@@ -1581,9 +1583,11 @@ fn project_move_fails_when_target_already_registered() {
         .args([
             "project",
             "move",
-            dir_b.path().to_str().unwrap(),
             "--project-path",
             dir_a.path().to_str().unwrap(),
+            "--new-path",
+            dir_b.path().to_str().unwrap(),
+            "--yes",
         ])
         .assert()
         .failure()
@@ -1606,9 +1610,11 @@ fn project_move_noop_when_same_path() {
         .args([
             "project",
             "move",
-            dir.path().to_str().unwrap(),
             "--project-path",
             dir.path().to_str().unwrap(),
+            "--new-path",
+            dir.path().to_str().unwrap(),
+            "--yes",
         ])
         .assert()
         .success()
@@ -1632,9 +1638,11 @@ fn project_move_fails_for_nonexistent_source_project() {
         .args([
             "project",
             "move",
-            new_dir.path().to_str().unwrap(),
             "--project-path",
             unregistered.path().to_str().unwrap(),
+            "--new-path",
+            new_dir.path().to_str().unwrap(),
+            "--yes",
         ])
         .assert()
         .failure()
@@ -1725,4 +1733,45 @@ fn project_list_empty_when_no_projects() {
         .assert()
         .success()
         .stdout(contains("No projects registered"));
+}
+
+#[test]
+fn project_list_filters_by_label() {
+    let home = tmp();
+    let dir_a = tmp();
+    let dir_b = tmp();
+
+    moco(&home)
+        .args(["project", "init", "alpha"])
+        .current_dir(dir_a.path())
+        .assert()
+        .success();
+
+    moco(&home)
+        .args(["project", "init", "beta"])
+        .current_dir(dir_b.path())
+        .assert()
+        .success();
+
+    // Add label "rust" to alpha only.
+    moco(&home)
+        .args(["project", "label", "add", "rust"])
+        .current_dir(dir_a.path())
+        .assert()
+        .success();
+
+    // Filtering by "rust" should show alpha but not beta.
+    moco(&home)
+        .args(["project", "list", "--label", "rust"])
+        .assert()
+        .success()
+        .stdout(contains("alpha"))
+        .stdout(contains("Projects (1)"));
+
+    // Filtering by an unknown label should report no matches.
+    moco(&home)
+        .args(["project", "list", "--label", "python"])
+        .assert()
+        .success()
+        .stdout(contains("No projects with label 'python'"));
 }

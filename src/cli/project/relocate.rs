@@ -1,3 +1,4 @@
+use std::io::{self, Write};
 use std::path::PathBuf;
 
 use clap::Args;
@@ -12,12 +13,17 @@ use crate::tui::{
 
 #[derive(Args)]
 pub struct MoveArgs {
-    /// New directory path for the project. Defaults to the current directory.
-    pub path: Option<PathBuf>,
-
     /// Directly select the project at this path (bypasses TUI — used in tests).
     #[arg(long, value_name = "PATH", hide = true)]
     pub project_path: Option<PathBuf>,
+
+    /// New path to assign (bypasses interactive prompt — used in tests).
+    #[arg(long, value_name = "PATH", hide = true)]
+    pub new_path: Option<PathBuf>,
+
+    /// Skip confirmation prompt (used in tests).
+    #[arg(long, hide = true)]
+    pub yes: bool,
 }
 
 pub fn run(args: &MoveArgs, store: &mut impl Store, theme: &Theme) -> anyhow::Result<()> {
@@ -77,12 +83,35 @@ pub fn run(args: &MoveArgs, store: &mut impl Store, theme: &Theme) -> anyhow::Re
         summaries.into_iter().nth(selected_idx).map(|(p, _)| p).expect("index in bounds")
     };
 
-    // Determine the new path — explicit arg or current directory.
-    let new_path = match &args.path {
-        Some(p) => p
-            .canonicalize()
-            .map_err(|_| anyhow::anyhow!("Path '{}' does not exist.", p.display()))?,
-        None => std::env::current_dir()?,
+    let old_path = project.path.clone();
+
+    // Determine the new path — hidden arg (tests) or interactive prompt.
+    let new_path = if let Some(p) = &args.new_path {
+        p.canonicalize()
+            .map_err(|_| anyhow::anyhow!("Path '{}' does not exist.", p.display()))?
+    } else {
+        let cwd = std::env::current_dir()?;
+        println!(
+            "Current path: {}",
+            theme.paint(old_path.display(), theme.accent)
+        );
+        print!(
+            "New path [{}]: ",
+            theme.paint(cwd.display(), theme.accent)
+        );
+        io::stdout().flush()?;
+
+        let mut input = String::new();
+        io::stdin().read_line(&mut input)?;
+        let trimmed = input.trim();
+
+        if trimmed.is_empty() {
+            cwd
+        } else {
+            let p = PathBuf::from(trimmed);
+            p.canonicalize()
+                .map_err(|_| anyhow::anyhow!("Path '{}' does not exist.", p.display()))?
+        }
     };
 
     // Guard: reject if another project is already registered at the new path.
@@ -103,9 +132,26 @@ pub fn run(args: &MoveArgs, store: &mut impl Store, theme: &Theme) -> anyhow::Re
         return Ok(());
     }
 
-    let old_path = project.path.clone();
+    // Confirm the move unless --yes was passed.
+    if !args.yes {
+        print!(
+            "Switch {} from {} → {}? [y/N] ",
+            theme.paint(format!("'{}'", project.name), theme.accent),
+            theme.paint(old_path.display(), theme.open),
+            theme.paint(new_path.display(), theme.accent),
+        );
+        io::stdout().flush()?;
+
+        let mut answer = String::new();
+        io::stdin().read_line(&mut answer)?;
+        if !answer.trim().eq_ignore_ascii_case("y") {
+            println!("Cancelled.");
+            return Ok(());
+        }
+    }
+
     project.path = new_path.clone();
-    store.update_project(&project)?;
+    store.relocate_project(&old_path, &project)?;
 
     println!(
         "Moved project {} from {} to {}.",

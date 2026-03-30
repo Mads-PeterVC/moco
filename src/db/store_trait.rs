@@ -26,6 +26,10 @@ pub trait Store {
     /// Persist changes to an existing project (e.g. updated labels).
     fn update_project(&mut self, project: &Project) -> Result<(), MocoError>;
 
+    /// Move a project to a new path: atomically removes the old path key and
+    /// writes a new one. Tasks and notes (keyed by project ID) are untouched.
+    fn relocate_project(&mut self, old_path: &Path, project: &Project) -> Result<(), MocoError>;
+
     /// Delete a project and all its tasks and notes atomically.
     fn delete_project(&mut self, project: &Project) -> Result<(), MocoError>;
 
