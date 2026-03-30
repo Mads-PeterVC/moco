@@ -51,19 +51,27 @@ pub fn run(args: &ListArgs, store: &dyn Store, theme: &Theme) -> anyhow::Result<
             date,
         );
 
-        // ── Path ────────────────────────────────────────────────────────────
-        println!("    {}", project.path.display());
+        // ── Directory ───────────────────────────────────────────────────────
+        println!(
+            "    {} {}",
+            theme.paint("Directory:", theme.label),
+            project.path.display(),
+        );
 
         // ── Labels ──────────────────────────────────────────────────────────
         if project.labels.is_empty() {
-            println!("    (no labels)");
+            println!("    {} (none)", theme.paint("Labels:", theme.label));
         } else {
             let formatted: Vec<String> = project
                 .labels
                 .iter()
                 .map(|l| theme.paint(format!("[{}]", l), theme.accent))
                 .collect();
-            println!("    {}", formatted.join("  "));
+            println!(
+                "    {} {}",
+                theme.paint("Labels:", theme.label),
+                formatted.join("  "),
+            );
         }
 
         // ── Task counts ─────────────────────────────────────────────────────
@@ -73,7 +81,7 @@ pub fn run(args: &ListArgs, store: &dyn Store, theme: &Theme) -> anyhow::Result<
         let deferred = tasks.iter().filter(|t| t.status == TaskStatus::Defer).count();
 
         if tasks.is_empty() {
-            println!("    No tasks");
+            println!("    {} No tasks", theme.paint("Tasks:", theme.label));
         } else {
             let mut parts: Vec<String> = Vec::new();
             if open > 0 {
@@ -85,7 +93,11 @@ pub fn run(args: &ListArgs, store: &dyn Store, theme: &Theme) -> anyhow::Result<
             if deferred > 0 {
                 parts.push(theme.paint(format!("{} deferred", deferred), theme.defer));
             }
-            println!("    {}", parts.join("  "));
+            println!(
+                "    {} {}",
+                theme.paint("Tasks:", theme.label),
+                parts.join("  "),
+            );
         }
 
         println!();

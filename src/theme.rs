@@ -61,6 +61,8 @@ pub struct Theme {
     pub selection_bg: Color,
     pub progress_filled: Color,
     pub progress_empty: Color,
+    /// Colour for secondary field headers (e.g. "Directory:", "Labels:").
+    pub label: Color,
 }
 
 /// Convert a ratatui [`Color`] to the equivalent crossterm color for terminal output.
@@ -153,6 +155,7 @@ impl Theme {
                 .as_deref()
                 .and_then(parse_color)
                 .unwrap_or(base.progress_empty),
+            label: base.label,
         }
     }
 
@@ -217,6 +220,7 @@ impl Theme {
             selection_bg: Color::Indexed(22), // dark forest green (#005f00)
             progress_filled: Color::Green,
             progress_empty: Color::Indexed(22),
+            label: Color::Indexed(65), // muted sage green (#5f875f)
         }
     }
 
@@ -229,6 +233,7 @@ impl Theme {
             selection_bg: Color::DarkGray,
             progress_filled: Color::White,
             progress_empty: Color::DarkGray,
+            label: Color::DarkGray,
         }
     }
 
@@ -241,6 +246,7 @@ impl Theme {
             selection_bg: Color::Indexed(236),
             progress_filled: Color::Cyan,
             progress_empty: Color::Indexed(236),
+            label: Color::Indexed(103), // muted purple-gray
         }
     }
 
@@ -253,6 +259,7 @@ impl Theme {
             selection_bg: Color::DarkGray,
             progress_filled: Color::LightBlue,
             progress_empty: Color::DarkGray,
+            label: Color::Indexed(110), // muted steel blue
         }
     }
 
@@ -265,6 +272,7 @@ impl Theme {
             selection_bg: Color::DarkGray,
             progress_filled: Color::Blue,
             progress_empty: Color::DarkGray,
+            label: Color::Indexed(66), // muted teal (#5f8787)
         }
     }
 }
