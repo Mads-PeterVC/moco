@@ -5,7 +5,7 @@ use uuid::Uuid;
 
 use crate::db::Store;
 use crate::error::MocoError;
-use crate::models::{Note, Project, Task, TaskStatus};
+use crate::models::{Category, Note, Project, Task, TaskStatus};
 
 /// redb table: canonical path (string) → JSON-encoded Project
 const PROJECTS: TableDefinition<&str, &str> = TableDefinition::new("projects");
@@ -15,6 +15,9 @@ const TASKS: TableDefinition<&str, &str> = TableDefinition::new("tasks");
 
 /// redb table: "<project_id_or_global>/<note_uuid>" → JSON-encoded Note
 const NOTES: TableDefinition<&str, &str> = TableDefinition::new("notes");
+
+/// redb table: category name → JSON-encoded Category
+const CATEGORIES: TableDefinition<&str, &str> = TableDefinition::new("categories");
 
 /// The global scope key used when no project is registered.
 const GLOBAL_SCOPE: &str = "global";
@@ -53,6 +56,7 @@ impl RedbStore {
         tx.open_table(PROJECTS)?;
         tx.open_table(TASKS)?;
         tx.open_table(NOTES)?;
+        tx.open_table(CATEGORIES)?;
         tx.commit()?;
         Ok(())
     }
@@ -176,8 +180,17 @@ impl Store for RedbStore {
         content: &str,
         parent_id: Option<Uuid>,
     ) -> Result<Task, MocoError> {
-        let display_index = self.next_open_display_index(project_id)?;
-        let task = Task::new(project_id, content, display_index, parent_id);
+        let task = if let Some(pid) = parent_id {
+            // Subtasks don't occupy a slot in the open display index sequence.
+            let sub_idx = self.next_sub_index(pid)?;
+            let mut t = Task::new(project_id, content, 0, Some(pid));
+            t.sub_index = Some(sub_idx);
+            t
+        } else {
+            let display_index = self.next_open_display_index(project_id)?;
+            Task::new(project_id, content, display_index, None)
+        };
+
         let key = task_key(project_id, task.id);
         let value = Self::serialize(&task)?;
 
@@ -241,11 +254,163 @@ impl Store for RedbStore {
         Ok(())
     }
 
+    fn get_task_by_id(&self, task_id: Uuid) -> Result<Option<Task>, MocoError> {
+        let tx = self.db.begin_read()?;
+        let table = tx.open_table(TASKS)?;
+        // Tasks are keyed as "<scope>/<task_id>" — scan all entries.
+        for entry in table.iter()? {
+            let (k, v) = entry?;
+            if k.value().ends_with(&task_id.to_string()) {
+                let task = Self::deserialize::<Task>(v.value())?;
+                return Ok(Some(task));
+            }
+        }
+        Ok(None)
+    }
+
+    fn get_completed_task(
+        &self,
+        project_id: Option<Uuid>,
+        completed_index: u32,
+    ) -> Result<Option<Task>, MocoError> {
+        let tasks = self.list_tasks(project_id)?;
+        Ok(tasks.into_iter().find(|t| {
+            t.status == TaskStatus::Complete
+                && t.parent_id.is_none()
+                && t.completed_index == Some(completed_index)
+        }))
+    }
+
+    fn get_deferred_task(
+        &self,
+        project_id: Option<Uuid>,
+        deferred_index: u32,
+    ) -> Result<Option<Task>, MocoError> {
+        let tasks = self.list_tasks(project_id)?;
+        Ok(tasks.into_iter().find(|t| {
+            t.status == TaskStatus::Defer
+                && t.parent_id.is_none()
+                && t.deferred_index == Some(deferred_index)
+        }))
+    }
+
+    fn get_open_subtask(
+        &self,
+        project_id: Option<Uuid>,
+        parent_display_index: u32,
+        sub_index: u32,
+    ) -> Result<Option<Task>, MocoError> {
+        let parent = self.get_open_task(project_id, parent_display_index)?;
+        let parent_id = match parent.map(|p| p.id) {
+            Some(id) => id,
+            None => return Ok(None),
+        };
+        let tasks = self.list_tasks(project_id)?;
+        Ok(tasks.into_iter().find(|t| {
+            t.parent_id == Some(parent_id) && t.sub_index == Some(sub_index)
+        }))
+    }
+
+    fn get_completed_parent_subtask(
+        &self,
+        project_id: Option<Uuid>,
+        parent_completed_index: u32,
+        sub_index: u32,
+    ) -> Result<Option<Task>, MocoError> {
+        let parent = self.get_completed_task(project_id, parent_completed_index)?;
+        let parent_id = match parent.map(|p| p.id) {
+            Some(id) => id,
+            None => return Ok(None),
+        };
+        let tasks = self.list_tasks(project_id)?;
+        Ok(tasks
+            .into_iter()
+            .find(|t| t.parent_id == Some(parent_id) && t.sub_index == Some(sub_index)))
+    }
+
+    fn get_deferred_parent_subtask(
+        &self,
+        project_id: Option<Uuid>,
+        parent_deferred_index: u32,
+        sub_index: u32,
+    ) -> Result<Option<Task>, MocoError> {
+        let parent = self.get_deferred_task(project_id, parent_deferred_index)?;
+        let parent_id = match parent.map(|p| p.id) {
+            Some(id) => id,
+            None => return Ok(None),
+        };
+        let tasks = self.list_tasks(project_id)?;
+        Ok(tasks
+            .into_iter()
+            .find(|t| t.parent_id == Some(parent_id) && t.sub_index == Some(sub_index)))
+    }
+
+    fn next_sub_index(&self, parent_id: Uuid) -> Result<u32, MocoError> {
+        let tx = self.db.begin_read()?;
+        let table = tx.open_table(TASKS)?;
+        let mut max: u32 = 0;
+        for entry in table.iter()? {
+            let (_k, v) = entry?;
+            let task = Self::deserialize::<Task>(v.value())?;
+            if task.parent_id == Some(parent_id) {
+                if let Some(si) = task.sub_index {
+                    max = max.max(si);
+                }
+            }
+        }
+        Ok(max + 1)
+    }
+
+    fn delete_task(&mut self, task_id: Uuid) -> Result<(), MocoError> {
+        // Collect the IDs of the task and all of its subtasks in one pass.
+        let tx_read = self.db.begin_read()?;
+        let table_read = tx_read.open_table(TASKS)?;
+
+        let mut to_delete: Vec<String> = Vec::new();
+        let mut project_id: Option<Uuid> = None;
+        let mut was_open = false;
+
+        for entry in table_read.iter()? {
+            let (k, v) = entry?;
+            let task = Self::deserialize::<Task>(v.value())?;
+            if task.id == task_id {
+                to_delete.push(k.value().to_string());
+                project_id = task.project_id;
+                was_open = task.status == TaskStatus::Open && task.parent_id.is_none();
+            } else if task.parent_id == Some(task_id) {
+                to_delete.push(k.value().to_string());
+            }
+        }
+        drop(table_read);
+        drop(tx_read);
+
+        if to_delete.is_empty() {
+            return Ok(());
+        }
+
+        let tx = self.db.begin_write()?;
+        {
+            let mut table = tx.open_table(TASKS)?;
+            for key in &to_delete {
+                table.remove(key.as_str())?;
+            }
+        }
+        tx.commit()?;
+
+        // Re-index open top-level tasks only when a top-level open task was removed.
+        if was_open {
+            self.reindex_open_tasks(project_id)?;
+        }
+
+        Ok(())
+    }
+
     fn next_open_display_index(&self, project_id: Option<Uuid>) -> Result<u32, MocoError> {
         let tasks = self.list_tasks(project_id)?;
         let max = tasks
             .iter()
-            .filter(|t| t.status == TaskStatus::Open)
+            // Subtasks are excluded from the top-level index sequence.
+            .filter(|t| t.status == TaskStatus::Open && t.parent_id.is_none())
             .map(|t| t.display_index)
             .max()
             .unwrap_or(0);
@@ -274,9 +439,11 @@ impl Store for RedbStore {
 
     fn reindex_open_tasks(&mut self, project_id: Option<Uuid>) -> Result<(), MocoError> {
         let tasks = self.list_tasks(project_id)?;
+        // Only top-level open tasks get a sequential display_index.
+        // Subtasks use sub_index (stable, not reindexed here).
         let mut open_tasks: Vec<Task> = tasks
             .into_iter()
-            .filter(|t| t.status == TaskStatus::Open)
+            .filter(|t| t.status == TaskStatus::Open && t.parent_id.is_none())
             .collect();
 
         // Preserve relative order by sorting on existing display_index.
@@ -456,6 +623,93 @@ impl Store for RedbStore {
         let notes = self.list_notes(project_id)?;
         let max = notes.iter().map(|n| n.display_index).max().unwrap_or(0);
         Ok(max + 1)
+    }
+
+    // ── Categories ────────────────────────────────────────────────────────────
+
+    fn create_category(&mut self, name: &str) -> Result<Category, MocoError> {
+        let existing = self.list_categories()?;
+        let next_order = existing.iter().map(|c| c.order).max().unwrap_or(0) + 1;
+        let category = Category::new(name, next_order);
+        let value = Self::serialize(&category)?;
+
+        let tx = self.db.begin_write()?;
+        {
+            let mut table = tx.open_table(CATEGORIES)?;
+            table.insert(name, value.as_str())?;
+        }
+        tx.commit()?;
+
+        Ok(category)
+    }
+
+    fn get_category(&self, name: &str) -> Result<Option<Category>, MocoError> {
+        let tx = self.db.begin_read()?;
+        let table = tx.open_table(CATEGORIES)?;
+        match table.get(name)? {
+            Some(v) => Ok(Some(Self::deserialize(v.value())?)),
+            None => Ok(None),
+        }
+    }
+
+    fn list_categories(&self) -> Result<Vec<Category>, MocoError> {
+        let tx = self.db.begin_read()?;
+        let table = tx.open_table(CATEGORIES)?;
+
+        let mut categories = Vec::new();
+        for entry in table.iter()? {
+            let (_, v) = entry?;
+            categories.push(Self::deserialize::<Category>(v.value())?);
+        }
+        categories.sort_by_key(|c| c.order);
+        Ok(categories)
+    }
+
+    fn delete_category(&mut self, name: &str) -> Result<(), MocoError> {
+        // Un-assign any projects in this category.
+        let projects = self.list_projects()?;
+        for mut project in projects {
+            if project.category.as_deref() == Some(name) {
+                project.category = None;
+                self.update_project(&project)?;
+            }
+        }
+
+        let tx = self.db.begin_write()?;
+        {
+            let mut table = tx.open_table(CATEGORIES)?;
+            table.remove(name)?;
+        }
+        tx.commit()?;
+
+        Ok(())
+    }
+
+    fn reorder_category(&mut self, name: &str, new_position: usize) -> Result<(), MocoError> {
+        let mut categories = self.list_categories()?;
+
+        let current_pos = categories.iter().position(|c| c.name == name).ok_or_else(|| {
+            MocoError::CategoryNotFound(name.to_string())
+        })?;
+
+        // Clamp to valid range (1-based positions, count = categories.len()).
+        let target = new_position.saturating_sub(1).min(categories.len() - 1);
+        let category = categories.remove(current_pos);
+        categories.insert(target, category);
+
+        // Reassign sequential order values.
+        let tx = self.db.begin_write()?;
+        {
+            let mut table = tx.open_table(CATEGORIES)?;
+            for (i, mut cat) in categories.into_iter().enumerate() {
+                cat.order = (i + 1) as u32;
+                let value = Self::serialize(&cat)?;
+                table.insert(cat.name.as_str(), value.as_str())?;
+            }
+        }
+        tx.commit()?;
+
+        Ok(())
     }
 }
 
@@ -696,5 +950,141 @@ mod tests {
         assert!(store.get_project_by_path(Path::new("/tmp/two")).unwrap().is_some());
         assert!(store.list_tasks(Some(p1.id)).unwrap().is_empty());
         assert_eq!(store.list_tasks(Some(p2.id)).unwrap().len(), 1);
+    }
+
+    // ── Category tests ───────────────────────────────────────────────────────
+
+    #[test]
+    fn create_and_list_categories_in_order() {
+        let (_dir, mut store) = temp_store();
+        store.create_category("work").unwrap();
+        store.create_category("personal").unwrap();
+        store.create_category("oss").unwrap();
+
+        let cats = store.list_categories().unwrap();
+        assert_eq!(cats.len(), 3);
+        assert_eq!(cats[0].name, "work");
+        assert_eq!(cats[1].name, "personal");
+        assert_eq!(cats[2].name, "oss");
+        assert_eq!(cats[0].order, 1);
+        assert_eq!(cats[1].order, 2);
+        assert_eq!(cats[2].order, 3);
+    }
+
+    #[test]
+    fn get_category_returns_correct_entry() {
+        let (_dir, mut store) = temp_store();
+        store.create_category("work").unwrap();
+
+        let found = store.get_category("work").unwrap();
+        assert!(found.is_some());
+        assert_eq!(found.unwrap().name, "work");
+
+        let missing = store.get_category("ghost").unwrap();
+        assert!(missing.is_none());
+    }
+
+    #[test]
+    fn delete_category_removes_it_and_unassigns_projects() {
+        let (_dir, mut store) = temp_store();
+        store.create_category("work").unwrap();
+        let mut project = store.create_project("proj", Path::new("/tmp/proj")).unwrap();
+        project.category = Some("work".to_string());
+        store.update_project(&project).unwrap();
+
+        store.delete_category("work").unwrap();
+
+        assert!(store.get_category("work").unwrap().is_none());
+        let updated = store.get_project_by_path(Path::new("/tmp/proj")).unwrap().unwrap();
+        assert!(updated.category.is_none());
+    }
+
+    #[test]
+    fn reorder_category_moves_to_front() {
+        let (_dir, mut store) = temp_store();
+        store.create_category("alpha").unwrap();
+        store.create_category("beta").unwrap();
+        store.create_category("gamma").unwrap();
+
+        store.reorder_category("gamma", 1).unwrap();
+
+        let cats = store.list_categories().unwrap();
+        assert_eq!(cats[0].name, "gamma");
+        assert_eq!(cats[1].name, "alpha");
+        assert_eq!(cats[2].name, "beta");
+        // Orders should be reassigned sequentially.
+        assert_eq!(cats[0].order, 1);
+        assert_eq!(cats[1].order, 2);
+        assert_eq!(cats[2].order, 3);
+    }
+
+    #[test]
+    fn reorder_category_moves_to_middle() {
+        let (_dir, mut store) = temp_store();
+        store.create_category("alpha").unwrap();
+        store.create_category("beta").unwrap();
+        store.create_category("gamma").unwrap();
+
+        // Move alpha to position 2.
+        store.reorder_category("alpha", 2).unwrap();
+
+        let cats = store.list_categories().unwrap();
+        assert_eq!(cats[0].name, "beta");
+        assert_eq!(cats[1].name, "alpha");
+        assert_eq!(cats[2].name, "gamma");
+    }
+
+    #[test]
+    fn reorder_category_nonexistent_returns_error() {
+        let (_dir, mut store) = temp_store();
+        store.create_category("work").unwrap();
+
+        let result = store.reorder_category("ghost", 1);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn delete_task_removes_task_and_subtasks() {
+        let (_dir, mut store) = temp_store();
+        let parent = store.add_task(None, "parent", None).unwrap();
+        let _child = store.add_task(None, "child", Some(parent.id)).unwrap();
+
+        store.delete_task(parent.id).unwrap();
+
+        let tasks = store.list_tasks(None).unwrap();
+        assert!(tasks.is_empty(), "parent and subtask should both be deleted");
+    }
+
+    #[test]
+    fn delete_task_reindexes_remaining_open_tasks() {
+        let (_dir, mut store) = temp_store();
+        let _t1 = store.add_task(None, "one", None).unwrap();
+        let t2 = store.add_task(None, "two", None).unwrap();
+        let _t3 = store.add_task(None, "three", None).unwrap();
+
+        store.delete_task(t2.id).unwrap();
+
+        let open: Vec<Task> = store
+            .list_tasks(None)
+            .unwrap()
+            .into_iter()
+            .filter(|t| t.status == TaskStatus::Open)
+            .collect();
+        let indices: Vec<u32> = open.iter().map(|t| t.display_index).collect();
+        assert_eq!(indices, vec![1, 2]);
+    }
+
+    #[test]
+    fn delete_subtask_does_not_reindex_top_level() {
+        let (_dir, mut store) = temp_store();
+        let parent = store.add_task(None, "parent", None).unwrap();
+        let child = store.add_task(None, "child", Some(parent.id)).unwrap();
+
+        store.delete_task(child.id).unwrap();
+
+        let tasks = store.list_tasks(None).unwrap();
+        // Parent should still exist with display_index 1.
+        assert_eq!(tasks.len(), 1);
+        assert_eq!(tasks[0].display_index, 1);
     }
 }

@@ -7,6 +7,34 @@ use crate::models::TaskStatus;
 use crate::theme::Theme;
 use crate::tui::{self, project_browser::{ProjectBrowser, ProjectBrowserOutcome}};
 
+/// Build browser groups from a flat summary list, respecting category order.
+fn build_groups(
+    summaries: &[(crate::models::Project, usize)],
+    store: &impl Store,
+) -> Vec<(String, Vec<(crate::models::Project, usize)>)> {
+    let categories = store.list_categories().unwrap_or_default();
+    let mut groups: Vec<(String, Vec<_>)> = Vec::new();
+    for cat in &categories {
+        let ps: Vec<_> = summaries
+            .iter()
+            .filter(|(p, _)| p.category.as_deref() == Some(cat.name.as_str()))
+            .cloned()
+            .collect();
+        if !ps.is_empty() {
+            groups.push((cat.name.clone(), ps));
+        }
+    }
+    let uncategorized: Vec<_> = summaries
+        .iter()
+        .filter(|(p, _)| p.category.is_none())
+        .cloned()
+        .collect();
+    if !uncategorized.is_empty() {
+        groups.push(("Uncategorized".to_string(), uncategorized));
+    }
+    groups
+}
+
 #[derive(Args)]
 pub struct DeleteArgs {
     /// Skip the confirmation prompt and delete immediately.
@@ -42,21 +70,30 @@ pub fn run(args: &DeleteArgs, store: &mut impl Store, theme: &Theme) -> anyhow::
         })
         .collect();
 
+    // Build grouped view for the browser.
+    let groups = build_groups(&summaries, store);
+
+    // Flatten groups into a stable ordered list for index resolution.
+    let flat_summaries: Vec<(crate::models::Project, usize)> = groups
+        .iter()
+        .flat_map(|(_, ps)| ps.iter().cloned())
+        .collect();
+
     // Resolve the target project — TUI browser or direct path.
     let project = if let Some(path) = &args.project_path {
         let canonical = path.canonicalize().unwrap_or_else(|_| path.clone());
-        summaries
+        flat_summaries
             .into_iter()
             .find(|(p, _)| p.path == canonical)
             .map(|(p, _)| p)
             .ok_or_else(|| anyhow::anyhow!("No project registered at {}", path.display()))?
     } else {
         let mut guard = tui::enter()?;
-        let mut browser = ProjectBrowser::new(summaries.len());
+        let mut browser = ProjectBrowser::new(flat_summaries.len());
 
         let selected_idx = loop {
             guard.terminal.draw(|frame| {
-                browser.render(frame, frame.area(), &summaries, theme);
+                browser.render(frame, frame.area(), &groups, theme);
             })?;
 
             if let crossterm::event::Event::Key(key) = crossterm::event::read()? {
@@ -73,7 +110,7 @@ pub fn run(args: &DeleteArgs, store: &mut impl Store, theme: &Theme) -> anyhow::
         };
 
         drop(guard);
-        summaries.into_iter().nth(selected_idx).map(|(p, _)| p).expect("index in bounds")
+        flat_summaries.into_iter().nth(selected_idx).map(|(p, _)| p).expect("index in bounds")
     };
 
     // Count tasks so the user knows what they're deleting.

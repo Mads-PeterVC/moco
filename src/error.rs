@@ -37,4 +37,7 @@ pub enum MocoError {
 
     #[error("home directory could not be determined")]
     HomeNotFound,
+
+    #[error("category '{0}' not found")]
+    CategoryNotFound(String),
 }

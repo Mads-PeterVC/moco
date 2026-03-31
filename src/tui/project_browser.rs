@@ -15,7 +15,7 @@ use crate::tui::scroll_list::ScrollList;
 
 /// Outcome of handling a key event in the project browser.
 pub enum ProjectBrowserOutcome {
-    /// User confirmed a selection; contains the index into the project slice.
+    /// User confirmed a selection; contains the index into the flattened project slice.
     Selected(usize),
     /// User cancelled.
     Cancelled,
@@ -23,13 +23,15 @@ pub enum ProjectBrowserOutcome {
     Continue,
 }
 
-/// Scrollable project list browser.
+/// Scrollable project list browser with optional category headers.
 pub struct ProjectBrowser {
+    /// Navigates only over selectable project items (headers are skipped).
     scroll: ScrollList,
     list_state: ListState,
 }
 
 impl ProjectBrowser {
+    /// Create a browser for `project_count` selectable items (sum across all groups).
     pub fn new(project_count: usize) -> Self {
         let scroll = ScrollList::new(project_count);
         let mut list_state = ListState::default();
@@ -62,30 +64,67 @@ impl ProjectBrowser {
         ProjectBrowserOutcome::Continue
     }
 
-    /// Currently highlighted index.
+    /// Currently highlighted selectable index (into the flattened project list).
     #[allow(dead_code)]
     pub fn selected(&self) -> Option<usize> {
         self.scroll.selected()
     }
 
+    /// Compute the visual (display) index of selectable item `selectable_idx` within
+    /// the grouped list (accounting for header rows).
+    fn visual_index_of(groups: &[(String, Vec<(Project, usize)>)], selectable_idx: usize) -> usize {
+        let mut visual = 0;
+        let mut remaining = selectable_idx;
+        for (_, projects) in groups {
+            visual += 1; // header row
+            if remaining < projects.len() {
+                visual += remaining;
+                return visual;
+            }
+            remaining -= projects.len();
+            visual += projects.len();
+        }
+        visual
+    }
+
     /// Render the browser into the given area.
     ///
-    /// `projects` is a slice of `(project, open_task_count)` pairs.
+    /// `groups` is a slice of `(category_name, [(project, open_task_count)])` pairs.
+    /// Projects without a category should be passed under `"Uncategorized"`.
     pub fn render(
         &mut self,
         frame: &mut Frame,
         area: Rect,
-        projects: &[(Project, usize)],
+        groups: &[(String, Vec<(Project, usize)>)],
         theme: &Theme,
     ) {
+        // Sync the visual list state with the current selectable selection.
+        if let Some(sel) = self.scroll.selected() {
+            let visual = Self::visual_index_of(groups, sel);
+            self.list_state.select(Some(visual));
+        } else {
+            self.list_state.select(None);
+        }
+
         let highlight_sym_width = 2usize; // "▶ "
         let name_col = 20usize;
         let path_col = 46usize;
         let fixed = highlight_sym_width + name_col + path_col;
 
-        let items: Vec<ListItem> = projects
-            .iter()
-            .map(|(p, open_count)| {
+        let mut items: Vec<ListItem> = Vec::new();
+
+        for (header, projects) in groups {
+            // Non-selectable category header row.
+            items.push(ListItem::new(Line::from(vec![
+                Span::styled(
+                    format!("── {header} ──"),
+                    Style::default()
+                        .fg(theme.label)
+                        .add_modifier(Modifier::BOLD),
+                ),
+            ])));
+
+            for (p, open_count) in projects {
                 let path = p.path.display().to_string();
                 let path_preview = if path.len() > 45 {
                     format!("…{}", &path[path.len() - 45..])
@@ -131,9 +170,9 @@ impl ProjectBrowser {
                     Style::default().fg(theme.open),
                 ));
 
-                ListItem::new(vec![line1, Line::from(line2)])
-            })
-            .collect();
+                items.push(ListItem::new(vec![line1, Line::from(line2)]));
+            }
+        }
 
         let list = List::new(items)
             .block(
@@ -232,5 +271,26 @@ mod tests {
         let mut b = ProjectBrowser::new(3);
         let outcome = b.handle_key(key(KeyCode::Esc));
         assert!(matches!(outcome, ProjectBrowserOutcome::Cancelled));
+    }
+
+    #[test]
+    fn visual_index_accounts_for_headers() {
+        use std::path::PathBuf;
+        // Group A: 2 projects, Group B: 1 project
+        // Visual layout: [A header] [A proj0] [A proj1] [B header] [B proj0]
+        // Selectable:         -          0         1          -         2
+        let dummy_proj = || {
+            (
+                Project::new("p", PathBuf::from("/tmp/p")),
+                0usize,
+            )
+        };
+        let groups: Vec<(String, Vec<(Project, usize)>)> = vec![
+            ("A".to_string(), vec![dummy_proj(), dummy_proj()]),
+            ("B".to_string(), vec![dummy_proj()]),
+        ];
+        assert_eq!(ProjectBrowser::visual_index_of(&groups, 0), 1); // A proj0
+        assert_eq!(ProjectBrowser::visual_index_of(&groups, 1), 2); // A proj1
+        assert_eq!(ProjectBrowser::visual_index_of(&groups, 2), 4); // B proj0
     }
 }

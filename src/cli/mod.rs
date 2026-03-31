@@ -9,8 +9,10 @@ pub mod list;
 pub mod note;
 pub mod open;
 pub mod project;
+pub mod remove;
 pub mod status;
 pub mod tag;
+pub mod task_ref;
 
 use clap::{Parser, Subcommand};
 
@@ -37,6 +39,8 @@ pub enum Command {
     Tag(tag::TagArgs),
     /// Manage notes for the current project (or global list).
     Note(note::NoteArgs),
+    /// Remove a task (and its subtasks) from the current project or global list.
+    Remove(remove::RemoveArgs),
     /// Manage moco configuration.
     Config(config::ConfigArgs),
 }

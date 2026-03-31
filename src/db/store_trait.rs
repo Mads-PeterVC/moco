@@ -2,7 +2,7 @@ use std::path::Path;
 use uuid::Uuid;
 
 use crate::error::MocoError;
-use crate::models::{Note, Project, Task};
+use crate::models::{Category, Note, Project, Task};
 
 /// Abstraction over the persistence backend.
 ///
@@ -37,6 +37,25 @@ pub trait Store {
     /// Delete a project and all its tasks and notes atomically.
     fn delete_project(&mut self, project: &Project) -> Result<(), MocoError>;
 
+    // ── Categories ──────────────────────────────────────────────────────────
+
+    /// Register a new category. Appended last in display order.
+    fn create_category(&mut self, name: &str) -> Result<Category, MocoError>;
+
+    /// Look up a category by name (case-sensitive).
+    fn get_category(&self, name: &str) -> Result<Option<Category>, MocoError>;
+
+    /// Return all categories sorted by `order` ascending.
+    fn list_categories(&self) -> Result<Vec<Category>, MocoError>;
+
+    /// Remove a category by name and un-assign any projects that were in it.
+    /// Projects whose `category` matched `name` have it set to `None`.
+    fn delete_category(&mut self, name: &str) -> Result<(), MocoError>;
+
+    /// Move category `name` to 1-based `new_position`, shifting others to fill
+    /// the gap. All `order` values are reassigned as 1, 2, … after the move.
+    fn reorder_category(&mut self, name: &str, new_position: usize) -> Result<(), MocoError>;
+
     // ── Tasks ────────────────────────────────────────────────────────────────
 
     /// Add a new task to a project (or the global list when `project_id` is `None`).
@@ -67,8 +86,55 @@ pub trait Store {
         tag: &str,
     ) -> Result<Vec<Task>, MocoError>;
 
+    /// Retrieve a task by its UUID (any status).
+    fn get_task_by_id(&self, task_id: Uuid) -> Result<Option<Task>, MocoError>;
+
+    /// Retrieve a *completed* task by its completed_index.
+    fn get_completed_task(
+        &self,
+        project_id: Option<Uuid>,
+        completed_index: u32,
+    ) -> Result<Option<Task>, MocoError>;
+
+    /// Retrieve a *deferred* task by its deferred_index.
+    fn get_deferred_task(
+        &self,
+        project_id: Option<Uuid>,
+        deferred_index: u32,
+    ) -> Result<Option<Task>, MocoError>;
+
+    /// Retrieve an open subtask by parent's open display_index and sub_index.
+    fn get_open_subtask(
+        &self,
+        project_id: Option<Uuid>,
+        parent_display_index: u32,
+        sub_index: u32,
+    ) -> Result<Option<Task>, MocoError>;
+
+    /// Retrieve a subtask of a completed parent by the parent's completed_index and sub_index.
+    fn get_completed_parent_subtask(
+        &self,
+        project_id: Option<Uuid>,
+        parent_completed_index: u32,
+        sub_index: u32,
+    ) -> Result<Option<Task>, MocoError>;
+
+    /// Retrieve a subtask of a deferred parent by the parent's deferred_index and sub_index.
+    fn get_deferred_parent_subtask(
+        &self,
+        project_id: Option<Uuid>,
+        parent_deferred_index: u32,
+        sub_index: u32,
+    ) -> Result<Option<Task>, MocoError>;
+
+    /// Return the next available sub_index for subtasks of a given parent.
+    fn next_sub_index(&self, parent_id: Uuid) -> Result<u32, MocoError>;
+
     /// Persist changes to an existing task (identified by `task.id`).
     fn update_task(&mut self, task: &Task) -> Result<(), MocoError>;
+
+    /// Delete a task by UUID. If the task has subtasks, they are deleted too.
+    fn delete_task(&mut self, task_id: Uuid) -> Result<(), MocoError>;
 
     /// Return the next available display index for open tasks in the given scope.
     fn next_open_display_index(&self, project_id: Option<Uuid>) -> Result<u32, MocoError>;

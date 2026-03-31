@@ -1,5 +1,7 @@
 mod relocate;
 pub mod list;
+mod category;
+mod set_category;
 
 use std::path::Path;
 
@@ -35,6 +37,11 @@ pub enum ProjectCommand {
     /// Change the registered directory for a project.
     #[command(name = "move")]
     Move(relocate::MoveArgs),
+    /// Manage project categories.
+    Category(category::CategoryArgs),
+    /// Assign a project to a category.
+    #[command(name = "set-category")]
+    SetCategory(set_category::SetCategoryArgs),
 }
 
 pub fn run(
@@ -52,5 +59,7 @@ pub fn run(
         ProjectCommand::Label(a) => label::run(a, store, cwd, theme),
         ProjectCommand::Export(a) => export::run(a, store, cwd, config, theme),
         ProjectCommand::Move(a) => relocate::run(a, store, theme),
+        ProjectCommand::Category(a) => category::run(a, store, theme),
+        ProjectCommand::SetCategory(a) => set_category::run(a, store, theme),
     }
 }

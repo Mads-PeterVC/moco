@@ -13,6 +13,9 @@ pub struct Project {
     /// User-defined labels for cross-project categorisation (e.g. "work", "personal").
     #[serde(default)]
     pub labels: Vec<String>,
+    /// The name of the category this project belongs to, if any.
+    #[serde(default)]
+    pub category: Option<String>,
     pub created_at: DateTime<Utc>,
     /// Updated whenever a task is added/modified/completed or the project is opened.
     /// Existing records without this field default to the Unix epoch (sort last).
@@ -32,6 +35,7 @@ impl Project {
             name: name.into(),
             path,
             labels: Vec::new(),
+            category: None,
             created_at: now,
             last_active: now,
         }

@@ -1,7 +1,6 @@
 use std::path::Path;
 
 use clap::Args;
-use uuid::Uuid;
 
 use crate::db::Store;
 use crate::models::{Task, TaskStatus};
@@ -119,31 +118,37 @@ fn print_section(section_tasks: &[&Task], all_tasks: &[Task], theme: &Theme) {
         if task.parent_id.is_some() {
             continue;
         }
-        print_task(task, false, theme);
-        print_subtasks(task.id, all_tasks, theme);
+        print_task(task, None, false, theme);
+        print_subtasks(task, all_tasks, theme);
     }
 }
 
 /// Recursively print subtasks of `parent_id`, indented with a tree connector.
-fn print_subtasks(parent_id: Uuid, all_tasks: &[Task], theme: &Theme) {
-    let children: Vec<&Task> = all_tasks
+fn print_subtasks(parent: &Task, all_tasks: &[Task], theme: &Theme) {
+    let mut children: Vec<&Task> = all_tasks
         .iter()
-        .filter(|t| t.parent_id == Some(parent_id))
+        .filter(|t| t.parent_id == Some(parent.id))
         .collect();
 
-    for child in children {
-        print_task(child, true, theme);
-        print_subtasks(child.id, all_tasks, theme);
+    children.sort_by_key(|t| t.sub_index.unwrap_or(0));
+
+    let last_idx = children.len().saturating_sub(1);
+    for (i, child) in children.iter().enumerate() {
+        print_task(child, Some(parent), i == last_idx, theme);
+        print_subtasks(child, all_tasks, theme);
     }
 }
 
-fn print_task(task: &Task, is_subtask: bool, theme: &Theme) {
+fn print_task(task: &Task, parent: Option<&Task>, is_last_sibling: bool, theme: &Theme) {
     let id_color = match task.status {
         TaskStatus::Open => theme.open,
         TaskStatus::Complete => theme.complete,
         TaskStatus::Defer => theme.defer,
     };
-    let id = theme.paint(task.display_id(), id_color);
+    let is_subtask = parent.is_some();
+    // Pad the plain ID string before colorizing — ANSI escape codes inflate byte
+    // length, which would make Rust's {:>N} format specifier skip padding entirely.
+    let raw_id = task.display_id_in_context(parent);
     let bar = progress_bar(task.progress, 20, theme);
 
     let preview = task.content.lines().next().unwrap_or("").trim();
@@ -161,9 +166,14 @@ fn print_task(task: &Task, is_subtask: bool, theme: &Theme) {
     };
 
     if is_subtask {
-        println!("        └─ {:>5}  {}  {}{}", id, bar, preview, tags);
+        // Right-align subtask IDs in a 6-char field to accommodate the longest
+        // prefixes (e.g. "CS#1.1", "DS#1.1"); pad before colorizing.
+        let id = theme.paint(format!("{:>6}", raw_id), id_color);
+        let connector = if is_last_sibling { "└─" } else { "├─" };
+        println!("   {} {}  {}  {}{}", connector, id, bar, preview, tags);
     } else {
-        println!("  {:>5}  {}  {}{}", id, bar, preview, tags);
+        let id = theme.paint(raw_id, id_color);
+        println!("  {}  {}  {}{}", id, bar, preview, tags);
     }
 }
 

@@ -10,6 +10,9 @@ pub struct ListArgs {
     /// Only show projects that have this label.
     #[arg(short, long, value_name = "LABEL")]
     pub label: Option<String>,
+    /// Only show projects in this category.
+    #[arg(short, long, value_name = "CATEGORY")]
+    pub category: Option<String>,
 }
 
 /// Format a `last_active` timestamp as `YYYY-MM-DD`, or `"never"` for the epoch sentinel.
@@ -22,6 +25,13 @@ pub fn format_last_active(dt: &DateTime<Utc>) -> String {
 }
 
 pub fn run(args: &ListArgs, store: &dyn Store, theme: &Theme) -> anyhow::Result<()> {
+    // Validate --category filter early so we can error even when no projects exist.
+    if let Some(filter) = &args.category {
+        if store.get_category(filter)?.is_none() {
+            anyhow::bail!("Category '{}' not found.", filter);
+        }
+    }
+
     let mut projects = store.list_projects()?;
 
     // Apply label filter when requested.
@@ -40,9 +50,74 @@ pub fn run(args: &ListArgs, store: &dyn Store, theme: &Theme) -> anyhow::Result<
         return Ok(());
     }
 
-    println!("Projects ({}):\n", projects.len());
+    // Apply category filter or group by category.
+    if let Some(filter) = &args.category {
+        // Category existence already validated above.
+        projects.retain(|p| p.category.as_deref().map(|c| c.eq_ignore_ascii_case(filter)).unwrap_or(false));
+        if projects.is_empty() {
+            println!("No projects in category '{}'.", filter);
+            return Ok(());
+        }
+        print_project_group(filter, &projects, store, theme)?;
+    } else {
+        // Group all projects by category (categories in order, Uncategorized last).
+        let categories = store.list_categories()?;
 
-    for project in &projects {
+        // Build groups: (header, projects_in_group).
+        let mut groups: Vec<(String, Vec<_>)> = Vec::new();
+        for cat in &categories {
+            let cat_projects: Vec<_> = projects
+                .iter()
+                .filter(|p| p.category.as_deref() == Some(cat.name.as_str()))
+                .cloned()
+                .collect();
+            if !cat_projects.is_empty() {
+                groups.push((cat.name.clone(), cat_projects));
+            }
+        }
+        let uncategorized: Vec<_> = projects
+            .iter()
+            .filter(|p| p.category.is_none())
+            .cloned()
+            .collect();
+        if !uncategorized.is_empty() {
+            groups.push(("Uncategorized".to_string(), uncategorized));
+        }
+
+        let total = projects.len();
+        println!("Projects ({total}):\n");
+
+        for (header, group_projects) in &groups {
+            // Print the category header.
+            println!(
+                "{}",
+                theme.paint(format!("── {header} ──"), theme.label),
+            );
+            print_project_group_items(group_projects, store, theme)?;
+        }
+    }
+
+    Ok(())
+}
+
+/// Print projects under a single named group (used for --category filter).
+fn print_project_group(
+    header: &str,
+    projects: &[crate::models::Project],
+    store: &dyn Store,
+    theme: &Theme,
+) -> anyhow::Result<()> {
+    println!("Projects in category '{}' ({}):\n", header, projects.len());
+    print_project_group_items(projects, store, theme)
+}
+
+/// Print a list of project entries without a group header.
+fn print_project_group_items(
+    projects: &[crate::models::Project],
+    store: &dyn Store,
+    theme: &Theme,
+) -> anyhow::Result<()> {
+    for project in projects {
         // ── Name + last active ───────────────────────────────────────────────
         let date = format_last_active(&project.last_active);
         println!(
@@ -105,3 +180,4 @@ pub fn run(args: &ListArgs, store: &dyn Store, theme: &Theme) -> anyhow::Result<
 
     Ok(())
 }
+

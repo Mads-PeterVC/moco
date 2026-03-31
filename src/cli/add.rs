@@ -75,7 +75,16 @@ pub fn run(args: &AddArgs, store: &mut dyn Store, cwd: &Path, theme: &Theme) -> 
         None => "global".to_string(),
     };
     let preview = task.content.lines().next().unwrap_or("").trim().to_string();
-    println!("Added {} task {}: {}", scope, task.display_id(), preview);
+
+    // For subtasks, display using the parent's context.
+    let display = if let Some(pid) = task.parent_id {
+        let parent = store.get_task_by_id(pid)?;
+        task.display_id_in_context(parent.as_ref())
+    } else {
+        task.display_id()
+    };
+
+    println!("Added {} task {}: {}", scope, display, preview);
 
     Ok(())
 }

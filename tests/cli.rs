@@ -1,4 +1,5 @@
 use assert_cmd::Command;
+use predicates::prelude::PredicateBooleanExt;
 use predicates::str::contains;
 use tempfile::TempDir;
 
@@ -148,7 +149,7 @@ fn add_subtask() {
         .current_dir(workspace.path())
         .assert()
         .success()
-        .stdout(contains("#2"));
+        .stdout(contains("S#1.1"));
 }
 
 #[test]
@@ -1774,4 +1775,877 @@ fn project_list_filters_by_label() {
         .assert()
         .success()
         .stdout(contains("No projects with label 'python'"));
+}
+
+// ── project category ─────────────────────────────────────────────────────────
+
+#[test]
+fn project_category_add() {
+    let home = tmp();
+
+    moco(&home)
+        .args(["project", "category", "add", "work"])
+        .assert()
+        .success()
+        .stdout(contains("Added category"))
+        .stdout(contains("work"));
+}
+
+#[test]
+fn project_category_add_duplicate_fails() {
+    let home = tmp();
+
+    moco(&home)
+        .args(["project", "category", "add", "work"])
+        .assert()
+        .success();
+
+    moco(&home)
+        .args(["project", "category", "add", "work"])
+        .assert()
+        .failure()
+        .stderr(contains("already exists"));
+}
+
+#[test]
+fn project_category_list() {
+    let home = tmp();
+
+    moco(&home)
+        .args(["project", "category", "add", "work"])
+        .assert()
+        .success();
+
+    moco(&home)
+        .args(["project", "category", "add", "personal"])
+        .assert()
+        .success();
+
+    moco(&home)
+        .args(["project", "category", "list"])
+        .assert()
+        .success()
+        .stdout(contains("work"))
+        .stdout(contains("personal"));
+}
+
+#[test]
+fn project_category_list_empty() {
+    let home = tmp();
+
+    moco(&home)
+        .args(["project", "category", "list"])
+        .assert()
+        .success()
+        .stdout(contains("No categories registered"));
+}
+
+#[test]
+fn project_category_remove() {
+    let home = tmp();
+
+    moco(&home)
+        .args(["project", "category", "add", "work"])
+        .assert()
+        .success();
+
+    moco(&home)
+        .args(["project", "category", "remove", "work"])
+        .assert()
+        .success()
+        .stdout(contains("Removed category 'work'"));
+
+    moco(&home)
+        .args(["project", "category", "list"])
+        .assert()
+        .success()
+        .stdout(contains("No categories registered"));
+}
+
+#[test]
+fn project_category_remove_nonexistent_fails() {
+    let home = tmp();
+
+    moco(&home)
+        .args(["project", "category", "remove", "ghost"])
+        .assert()
+        .failure()
+        .stderr(contains("not found"));
+}
+
+#[test]
+fn project_category_remove_with_assigned_projects_requires_force() {
+    let home = tmp();
+    let dir = tmp();
+
+    moco(&home)
+        .args(["project", "init", "myproj"])
+        .current_dir(dir.path())
+        .assert()
+        .success();
+
+    moco(&home)
+        .args(["project", "category", "add", "work"])
+        .assert()
+        .success();
+
+    moco(&home)
+        .args(["project", "set-category", "myproj", "work"])
+        .assert()
+        .success();
+
+    // Remove without --force should fail.
+    moco(&home)
+        .args(["project", "category", "remove", "work"])
+        .assert()
+        .failure()
+        .stderr(contains("--force"));
+
+    // Remove with --force should succeed and un-assign the project.
+    moco(&home)
+        .args(["project", "category", "remove", "work", "--force"])
+        .assert()
+        .success()
+        .stdout(contains("Removed category 'work'"))
+        .stdout(contains("un-assigned"));
+}
+
+#[test]
+fn project_category_reorder() {
+    let home = tmp();
+
+    moco(&home)
+        .args(["project", "category", "add", "alpha"])
+        .assert()
+        .success();
+
+    moco(&home)
+        .args(["project", "category", "add", "beta"])
+        .assert()
+        .success();
+
+    moco(&home)
+        .args(["project", "category", "add", "gamma"])
+        .assert()
+        .success();
+
+    // Move gamma to position 1 (currently position 3).
+    moco(&home)
+        .args(["project", "category", "reorder", "gamma", "1"])
+        .assert()
+        .success()
+        .stdout(contains("gamma"))
+        .stdout(contains("position 1"));
+
+    // List should now show gamma first.
+    let out = moco(&home)
+        .args(["project", "category", "list"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+
+    let text = std::str::from_utf8(&out).unwrap();
+    let gamma_pos = text.find("gamma").unwrap();
+    let alpha_pos = text.find("alpha").unwrap();
+    assert!(
+        gamma_pos < alpha_pos,
+        "gamma should appear before alpha after reorder"
+    );
+}
+
+#[test]
+fn project_category_reorder_invalid_position_fails() {
+    let home = tmp();
+
+    moco(&home)
+        .args(["project", "category", "add", "work"])
+        .assert()
+        .success();
+
+    // Position 0 is invalid.
+    moco(&home)
+        .args(["project", "category", "reorder", "work", "0"])
+        .assert()
+        .failure()
+        .stderr(contains("out of range"));
+
+    // Position beyond count is also invalid.
+    moco(&home)
+        .args(["project", "category", "reorder", "work", "99"])
+        .assert()
+        .failure()
+        .stderr(contains("out of range"));
+}
+
+// ── project set-category ──────────────────────────────────────────────────────
+
+#[test]
+fn project_set_category_assigns_project() {
+    let home = tmp();
+    let dir = tmp();
+
+    moco(&home)
+        .args(["project", "init", "myproj"])
+        .current_dir(dir.path())
+        .assert()
+        .success();
+
+    moco(&home)
+        .args(["project", "category", "add", "work"])
+        .assert()
+        .success();
+
+    moco(&home)
+        .args(["project", "set-category", "myproj", "work"])
+        .assert()
+        .success()
+        .stdout(contains("myproj"))
+        .stdout(contains("work"));
+}
+
+#[test]
+fn project_set_category_invalid_category_fails() {
+    let home = tmp();
+    let dir = tmp();
+
+    moco(&home)
+        .args(["project", "init", "myproj"])
+        .current_dir(dir.path())
+        .assert()
+        .success();
+
+    moco(&home)
+        .args(["project", "set-category", "myproj", "ghost"])
+        .assert()
+        .failure()
+        .stderr(contains("does not exist"));
+}
+
+#[test]
+fn project_set_category_nonexistent_project_fails() {
+    let home = tmp();
+
+    moco(&home)
+        .args(["project", "category", "add", "work"])
+        .assert()
+        .success();
+
+    moco(&home)
+        .args(["project", "set-category", "ghost", "work"])
+        .assert()
+        .failure()
+        .stderr(contains("No project named 'ghost'"));
+}
+
+#[test]
+fn project_set_category_unset_removes_assignment() {
+    let home = tmp();
+    let dir = tmp();
+
+    moco(&home)
+        .args(["project", "init", "myproj"])
+        .current_dir(dir.path())
+        .assert()
+        .success();
+
+    moco(&home)
+        .args(["project", "category", "add", "work"])
+        .assert()
+        .success();
+
+    moco(&home)
+        .args(["project", "set-category", "myproj", "work"])
+        .assert()
+        .success();
+
+    moco(&home)
+        .args(["project", "set-category", "myproj", "--unset"])
+        .assert()
+        .success()
+        .stdout(contains("Removed category 'work'"));
+}
+
+// ── project list with categories ──────────────────────────────────────────────
+
+#[test]
+fn project_list_shows_category_headers() {
+    let home = tmp();
+    let dir_a = tmp();
+    let dir_b = tmp();
+
+    moco(&home)
+        .args(["project", "init", "alpha"])
+        .current_dir(dir_a.path())
+        .assert()
+        .success();
+
+    moco(&home)
+        .args(["project", "init", "beta"])
+        .current_dir(dir_b.path())
+        .assert()
+        .success();
+
+    moco(&home)
+        .args(["project", "category", "add", "work"])
+        .assert()
+        .success();
+
+    moco(&home)
+        .args(["project", "set-category", "alpha", "work"])
+        .assert()
+        .success();
+
+    // List should show "work" as header and "Uncategorized" for beta.
+    moco(&home)
+        .args(["project", "list"])
+        .assert()
+        .success()
+        .stdout(contains("work"))
+        .stdout(contains("Uncategorized"))
+        .stdout(contains("alpha"))
+        .stdout(contains("beta"));
+}
+
+#[test]
+fn project_list_uncategorized_appears_last() {
+    let home = tmp();
+    let dir_a = tmp();
+    let dir_b = tmp();
+
+    moco(&home)
+        .args(["project", "init", "alpha"])
+        .current_dir(dir_a.path())
+        .assert()
+        .success();
+
+    moco(&home)
+        .args(["project", "init", "beta"])
+        .current_dir(dir_b.path())
+        .assert()
+        .success();
+
+    moco(&home)
+        .args(["project", "category", "add", "work"])
+        .assert()
+        .success();
+
+    moco(&home)
+        .args(["project", "set-category", "alpha", "work"])
+        .assert()
+        .success();
+
+    let out = moco(&home)
+        .args(["project", "list"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+
+    let text = std::str::from_utf8(&out).unwrap();
+    let work_pos = text.find("work").unwrap();
+    let uncat_pos = text.find("Uncategorized").unwrap();
+    assert!(
+        work_pos < uncat_pos,
+        "categorised header should appear before Uncategorized"
+    );
+}
+
+#[test]
+fn project_list_filter_by_category() {
+    let home = tmp();
+    let dir_a = tmp();
+    let dir_b = tmp();
+
+    moco(&home)
+        .args(["project", "init", "alpha"])
+        .current_dir(dir_a.path())
+        .assert()
+        .success();
+
+    moco(&home)
+        .args(["project", "init", "beta"])
+        .current_dir(dir_b.path())
+        .assert()
+        .success();
+
+    moco(&home)
+        .args(["project", "category", "add", "work"])
+        .assert()
+        .success();
+
+    moco(&home)
+        .args(["project", "set-category", "alpha", "work"])
+        .assert()
+        .success();
+
+    moco(&home)
+        .args(["project", "list", "--category", "work"])
+        .assert()
+        .success()
+        .stdout(contains("alpha"))
+        .stdout(predicates::str::contains("beta").not());
+}
+
+#[test]
+fn project_list_filter_by_nonexistent_category_fails() {
+    let home = tmp();
+
+    moco(&home)
+        .args(["project", "list", "--category", "ghost"])
+        .assert()
+        .failure()
+        .stderr(contains("not found"));
+}
+
+// ── Subtask sub-indexing & completed/deferred task editing ───────────────────
+
+#[test]
+fn subtask_gets_sub_index_display() {
+    let home = tmp();
+    let workspace = tmp();
+
+    moco(&home)
+        .args(["project", "init", "proj"])
+        .current_dir(workspace.path())
+        .assert()
+        .success();
+
+    moco(&home)
+        .args(["add", "Parent"])
+        .current_dir(workspace.path())
+        .assert()
+        .success();
+
+    moco(&home)
+        .args(["add", "--sub", "1", "Child"])
+        .current_dir(workspace.path())
+        .assert()
+        .success()
+        .stdout(contains("S#1.1"));
+}
+
+#[test]
+fn second_subtask_gets_incremented_sub_index() {
+    let home = tmp();
+    let workspace = tmp();
+
+    moco(&home)
+        .args(["project", "init", "proj"])
+        .current_dir(workspace.path())
+        .assert()
+        .success();
+
+    moco(&home)
+        .args(["add", "Parent"])
+        .current_dir(workspace.path())
+        .assert()
+        .success();
+
+    moco(&home)
+        .args(["add", "--sub", "1", "First child"])
+        .current_dir(workspace.path())
+        .assert()
+        .success();
+
+    moco(&home)
+        .args(["add", "--sub", "1", "Second child"])
+        .current_dir(workspace.path())
+        .assert()
+        .success()
+        .stdout(contains("S#1.2"));
+}
+
+#[test]
+fn subtask_completion_shows_cs_format() {
+    let home = tmp();
+    let workspace = tmp();
+
+    moco(&home)
+        .args(["project", "init", "proj"])
+        .current_dir(workspace.path())
+        .assert()
+        .success();
+
+    moco(&home)
+        .args(["add", "Parent"])
+        .current_dir(workspace.path())
+        .assert()
+        .success();
+
+    moco(&home)
+        .args(["add", "--sub", "1", "Child"])
+        .current_dir(workspace.path())
+        .assert()
+        .success();
+
+    moco(&home)
+        .args(["status", "1.1", "complete"])
+        .current_dir(workspace.path())
+        .assert()
+        .success()
+        .stdout(contains("CS#1.1"));
+}
+
+#[test]
+fn status_with_subtask_ref_sets_progress() {
+    let home = tmp();
+    let workspace = tmp();
+
+    moco(&home)
+        .args(["project", "init", "proj"])
+        .current_dir(workspace.path())
+        .assert()
+        .success();
+
+    moco(&home)
+        .args(["add", "Parent"])
+        .current_dir(workspace.path())
+        .assert()
+        .success();
+
+    moco(&home)
+        .args(["add", "--sub", "1", "Child"])
+        .current_dir(workspace.path())
+        .assert()
+        .success();
+
+    moco(&home)
+        .args(["status", "1.1", "50"])
+        .current_dir(workspace.path())
+        .assert()
+        .success()
+        .stdout(contains("S#1.1"));
+}
+
+#[test]
+fn edit_completed_task_with_c_ref() {
+    let home = tmp();
+    let workspace = tmp();
+
+    moco(&home)
+        .args(["project", "init", "proj"])
+        .current_dir(workspace.path())
+        .assert()
+        .success();
+
+    moco(&home)
+        .args(["add", "My task"])
+        .current_dir(workspace.path())
+        .assert()
+        .success();
+
+    moco(&home)
+        .args(["status", "1", "complete"])
+        .current_dir(workspace.path())
+        .assert()
+        .success();
+
+    moco(&home)
+        .args(["edit", "-t", "C1", "Updated content", "--replace"])
+        .current_dir(workspace.path())
+        .assert()
+        .success()
+        .stdout(contains("C#1"));
+}
+
+#[test]
+fn status_reopen_completed_task() {
+    let home = tmp();
+    let workspace = tmp();
+
+    moco(&home)
+        .args(["project", "init", "proj"])
+        .current_dir(workspace.path())
+        .assert()
+        .success();
+
+    moco(&home)
+        .args(["add", "My task"])
+        .current_dir(workspace.path())
+        .assert()
+        .success();
+
+    moco(&home)
+        .args(["status", "1", "complete"])
+        .current_dir(workspace.path())
+        .assert()
+        .success();
+
+    moco(&home)
+        .args(["status", "C1", "open"])
+        .current_dir(workspace.path())
+        .assert()
+        .success()
+        .stdout(contains("re-opened"));
+}
+
+#[test]
+fn status_defer_completed_task() {
+    let home = tmp();
+    let workspace = tmp();
+
+    moco(&home)
+        .args(["project", "init", "proj"])
+        .current_dir(workspace.path())
+        .assert()
+        .success();
+
+    moco(&home)
+        .args(["add", "My task"])
+        .current_dir(workspace.path())
+        .assert()
+        .success();
+
+    moco(&home)
+        .args(["status", "1", "complete"])
+        .current_dir(workspace.path())
+        .assert()
+        .success();
+
+    moco(&home)
+        .args(["status", "C1", "defer"])
+        .current_dir(workspace.path())
+        .assert()
+        .success()
+        .stdout(contains("deferred"));
+}
+
+#[test]
+fn subtasks_do_not_affect_top_level_index_sequence() {
+    let home = tmp();
+    let workspace = tmp();
+
+    moco(&home)
+        .args(["project", "init", "proj"])
+        .current_dir(workspace.path())
+        .assert()
+        .success();
+
+    moco(&home)
+        .args(["add", "First"])
+        .current_dir(workspace.path())
+        .assert()
+        .success()
+        .stdout(contains("#1"));
+
+    moco(&home)
+        .args(["add", "--sub", "1", "Child of first"])
+        .current_dir(workspace.path())
+        .assert()
+        .success()
+        .stdout(contains("S#1.1"));
+
+    // Second top-level task should be #2, not #3.
+    moco(&home)
+        .args(["add", "Second"])
+        .current_dir(workspace.path())
+        .assert()
+        .success()
+        .stdout(contains("#2"));
+}
+
+// ── moco remove ──────────────────────────────────────────────────────────────
+
+#[test]
+fn remove_open_task_by_index() {
+    let home = tmp();
+    let workspace = tmp();
+
+    moco(&home)
+        .args(["project", "init", "proj"])
+        .current_dir(workspace.path())
+        .assert()
+        .success();
+
+    moco(&home)
+        .args(["add", "Task to delete"])
+        .current_dir(workspace.path())
+        .assert()
+        .success();
+
+    moco(&home)
+        .args(["remove", "--yes", "1"])
+        .current_dir(workspace.path())
+        .assert()
+        .success()
+        .stdout(contains("Deleted task"));
+
+    moco(&home)
+        .args(["list"])
+        .current_dir(workspace.path())
+        .assert()
+        .success()
+        .stdout(contains("No tasks"));
+}
+
+#[test]
+fn remove_task_reindexes_remaining() {
+    let home = tmp();
+    let workspace = tmp();
+
+    moco(&home)
+        .args(["project", "init", "proj"])
+        .current_dir(workspace.path())
+        .assert()
+        .success();
+
+    moco(&home)
+        .args(["add", "First"])
+        .current_dir(workspace.path())
+        .assert()
+        .success();
+
+    moco(&home)
+        .args(["add", "Second"])
+        .current_dir(workspace.path())
+        .assert()
+        .success();
+
+    moco(&home)
+        .args(["add", "Third"])
+        .current_dir(workspace.path())
+        .assert()
+        .success();
+
+    // Remove the middle task.
+    moco(&home)
+        .args(["remove", "--yes", "2"])
+        .current_dir(workspace.path())
+        .assert()
+        .success();
+
+    // "Third" should now be #2.
+    moco(&home)
+        .args(["status", "2", "complete"])
+        .current_dir(workspace.path())
+        .assert()
+        .success()
+        .stdout(contains("C#1"));
+}
+
+#[test]
+fn remove_subtask_by_ref() {
+    let home = tmp();
+    let workspace = tmp();
+
+    moco(&home)
+        .args(["project", "init", "proj"])
+        .current_dir(workspace.path())
+        .assert()
+        .success();
+
+    moco(&home)
+        .args(["add", "Parent"])
+        .current_dir(workspace.path())
+        .assert()
+        .success();
+
+    moco(&home)
+        .args(["add", "--sub", "1", "Child"])
+        .current_dir(workspace.path())
+        .assert()
+        .success();
+
+    moco(&home)
+        .args(["remove", "--yes", "1.1"])
+        .current_dir(workspace.path())
+        .assert()
+        .success()
+        .stdout(contains("S#1.1"));
+}
+
+#[test]
+fn remove_completed_task_by_c_ref() {
+    let home = tmp();
+    let workspace = tmp();
+
+    moco(&home)
+        .args(["project", "init", "proj"])
+        .current_dir(workspace.path())
+        .assert()
+        .success();
+
+    moco(&home)
+        .args(["add", "Task"])
+        .current_dir(workspace.path())
+        .assert()
+        .success();
+
+    moco(&home)
+        .args(["status", "1", "complete"])
+        .current_dir(workspace.path())
+        .assert()
+        .success();
+
+    moco(&home)
+        .args(["remove", "--yes", "C1"])
+        .current_dir(workspace.path())
+        .assert()
+        .success()
+        .stdout(contains("C#1"));
+}
+
+#[test]
+fn remove_nonexistent_task_fails() {
+    let home = tmp();
+    let workspace = tmp();
+
+    moco(&home)
+        .args(["project", "init", "proj"])
+        .current_dir(workspace.path())
+        .assert()
+        .success();
+
+    moco(&home)
+        .args(["remove", "--yes", "99"])
+        .current_dir(workspace.path())
+        .assert()
+        .failure();
+}
+
+#[test]
+fn remove_parent_also_removes_subtasks() {
+    let home = tmp();
+    let workspace = tmp();
+
+    moco(&home)
+        .args(["project", "init", "proj"])
+        .current_dir(workspace.path())
+        .assert()
+        .success();
+
+    moco(&home)
+        .args(["add", "Parent"])
+        .current_dir(workspace.path())
+        .assert()
+        .success();
+
+    moco(&home)
+        .args(["add", "--sub", "1", "Child 1"])
+        .current_dir(workspace.path())
+        .assert()
+        .success();
+
+    moco(&home)
+        .args(["add", "--sub", "1", "Child 2"])
+        .current_dir(workspace.path())
+        .assert()
+        .success();
+
+    moco(&home)
+        .args(["remove", "--yes", "1"])
+        .current_dir(workspace.path())
+        .assert()
+        .success()
+        .stdout(contains("2 subtask(s)"));
+
+    moco(&home)
+        .args(["list"])
+        .current_dir(workspace.path())
+        .assert()
+        .success()
+        .stdout(contains("No tasks"));
 }

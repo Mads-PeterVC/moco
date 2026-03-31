@@ -3,8 +3,8 @@ use std::path::Path;
 use clap::Args;
 use crossterm::event::{self, Event, KeyEventKind};
 
+use crate::cli::task_ref;
 use crate::db::Store;
-use crate::error::MocoError;
 use crate::theme::Theme;
 use crate::tui::{
     self,
@@ -15,9 +15,10 @@ use crate::workspace;
 
 #[derive(Args)]
 pub struct EditArgs {
-    /// Display index of the open task to edit. If omitted, opens the task browser.
+    /// Task reference to edit: open (`1`), subtask (`1.2`), completed (`C1`), deferred (`D1`).
+    /// If omitted, opens the task browser.
     #[arg(short = 't', long = "task", value_name = "TASK_ID")]
-    pub task_id: Option<u32>,
+    pub task_id: Option<String>,
 
     /// New content for the task (non-interactive mode).
     pub content: Option<String>,
@@ -44,13 +45,14 @@ pub fn run(args: &EditArgs, store: &mut dyn Store, cwd: &Path, theme: &Theme) ->
 
     // Non-interactive path: content + --append or --replace flag provided.
     if let Some(content) = &args.content {
-        let task_id = args
+        let task_id_str = args
             .task_id
+            .as_deref()
             .ok_or_else(|| anyhow::anyhow!("-t <TASK_ID> is required for non-interactive edit"))?;
 
-        let mut task = store
-            .get_open_task(project_id, task_id)?
-            .ok_or(MocoError::TaskNotFound(task_id))?;
+        let task_ref = task_ref::parse(task_id_str).map_err(|e| anyhow::anyhow!(e))?;
+        let mut task = task_ref::resolve(store, project_id, &task_ref)?
+            .ok_or_else(|| anyhow::anyhow!("Task '{}' not found.", task_id_str))?;
 
         if args.append {
             if !task.content.is_empty() && !task.content.ends_with('\n') {
@@ -63,15 +65,23 @@ pub fn run(args: &EditArgs, store: &mut dyn Store, cwd: &Path, theme: &Theme) ->
             anyhow::bail!("Provide --append or --replace with content.");
         }
 
+        let parent = if let Some(pid) = task.parent_id {
+            store.get_task_by_id(pid)?
+        } else {
+            None
+        };
+        let display = task.display_id_in_context(parent.as_ref());
         task.updated_at = chrono::Utc::now();
         store.update_task(&task)?;
-        println!("Task {} updated.", task.display_id());
+        println!("Task {} updated.", display);
         return Ok(());
     }
 
     // TUI path.
-    let task_id = if let Some(id) = args.task_id {
-        id
+    let task = if let Some(ref id_str) = args.task_id {
+        let task_ref = task_ref::parse(id_str).map_err(|e| anyhow::anyhow!(e))?;
+        task_ref::resolve(store, project_id, &task_ref)?
+            .ok_or_else(|| anyhow::anyhow!("Task '{}' not found.", id_str))?
     } else {
         // Open browser to let the user pick a task.
         let tasks = store.list_tasks(project_id)?;
@@ -82,25 +92,11 @@ pub fn run(args: &EditArgs, store: &mut dyn Store, cwd: &Path, theme: &Theme) ->
         let selected_index = run_browser(&tasks, theme)?;
         match selected_index {
             None => return Ok(()), // cancelled
-            Some(i) => {
-                let selected_task = &tasks[i];
-                match selected_task.status {
-                    crate::models::TaskStatus::Open => selected_task.display_index,
-                    _ => {
-                        // For non-open tasks, we'd need a different lookup — out of scope for now.
-                        anyhow::bail!(
-                            "Only open tasks can be edited via the TUI. Use {} directly with -t.",
-                            selected_task.display_id()
-                        );
-                    }
-                }
-            }
+            Some(i) => tasks[i].clone(),
         }
     };
 
-    let mut task = store
-        .get_open_task(project_id, task_id)?
-        .ok_or(MocoError::TaskNotFound(task_id))?;
+    let mut task = task;
 
     // Split existing content into title (first line) and body (rest).
     let mut lines = task.content.splitn(2, '\n');
@@ -120,9 +116,16 @@ pub fn run(args: &EditArgs, store: &mut dyn Store, cwd: &Path, theme: &Theme) ->
     } else {
         format!("{}\n{}", title, body)
     };
+
+    let parent = if let Some(pid) = task.parent_id {
+        store.get_task_by_id(pid)?
+    } else {
+        None
+    };
+    let display = task.display_id_in_context(parent.as_ref());
     task.updated_at = chrono::Utc::now();
     store.update_task(&task)?;
-    println!("Task {} updated.", task.display_id());
+    println!("Task {} updated.", display);
 
     Ok(())
 }

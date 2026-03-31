@@ -42,10 +42,38 @@ pub fn run(args: &OpenArgs, store: &mut impl Store, config: &AppConfig, theme: &
         })
         .collect();
 
+    // Group summaries by category (in category display order, Uncategorized last).
+    let categories = store.list_categories()?;
+    let mut groups: Vec<(String, Vec<(crate::models::Project, usize)>)> = Vec::new();
+    for cat in &categories {
+        let cat_projects: Vec<_> = summaries
+            .iter()
+            .filter(|(p, _)| p.category.as_deref() == Some(cat.name.as_str()))
+            .cloned()
+            .collect();
+        if !cat_projects.is_empty() {
+            groups.push((cat.name.clone(), cat_projects));
+        }
+    }
+    let uncategorized: Vec<_> = summaries
+        .iter()
+        .filter(|(p, _)| p.category.is_none())
+        .cloned()
+        .collect();
+    if !uncategorized.is_empty() {
+        groups.push(("Uncategorized".to_string(), uncategorized));
+    }
+
+    // Flattened list in grouped order — indices returned by the browser refer to this.
+    let flat_summaries: Vec<(crate::models::Project, usize)> = groups
+        .iter()
+        .flat_map(|(_, ps)| ps.iter().cloned())
+        .collect();
+
     // If --project-path is given, skip the TUI and resolve directly.
     let selected_project = if let Some(path) = &args.project_path {
         let canonical = path.canonicalize().unwrap_or_else(|_| path.clone());
-        summaries
+        flat_summaries
             .into_iter()
             .find(|(p, _)| p.path == canonical)
             .map(|(p, _)| p)
@@ -53,11 +81,11 @@ pub fn run(args: &OpenArgs, store: &mut impl Store, config: &AppConfig, theme: &
     } else {
         // Launch the TUI project browser.
         let mut guard = tui::enter()?;
-        let mut browser = ProjectBrowser::new(summaries.len());
+        let mut browser = ProjectBrowser::new(flat_summaries.len());
 
         let selected_idx = loop {
             guard.terminal.draw(|frame| {
-                browser.render(frame, frame.area(), &summaries, theme);
+                browser.render(frame, frame.area(), &groups, theme);
             })?;
 
             if let crossterm::event::Event::Key(key) = crossterm::event::read()? {
@@ -74,7 +102,7 @@ pub fn run(args: &OpenArgs, store: &mut impl Store, config: &AppConfig, theme: &
         };
 
         drop(guard);
-        summaries.into_iter().nth(selected_idx).map(|(p, _)| p).expect("index in bounds")
+        flat_summaries.into_iter().nth(selected_idx).map(|(p, _)| p).expect("index in bounds")
     };
 
     let open_cmd = config.moco_config.resolve_open_command()?;
