@@ -2,6 +2,7 @@ mod cli;
 mod config;
 mod db;
 mod error;
+mod git;
 mod models;
 mod theme;
 mod tui;
@@ -28,10 +29,11 @@ fn main() -> anyhow::Result<()> {
         cli::Command::Add(args) => cli::add::run(args, &mut store, &cwd, &theme),
         cli::Command::Edit(args) => cli::edit::run(args, &mut store, &cwd, &theme),
         cli::Command::Status(args) => cli::status::run(args, &mut store, &cwd, &theme),
-        cli::Command::List(args) => cli::list::run(args, &store, &cwd, &theme),
+        cli::Command::List(args) => cli::list::run(args, &mut store, &cwd, &theme),
         cli::Command::Tag(args) => cli::tag::run(args, &mut store, &cwd, &theme),
         cli::Command::Note(args) => cli::note::run(args, &mut store, &cwd, &theme),
         cli::Command::Remove(args) => cli::remove::run(args, &mut store, &cwd, &theme),
         cli::Command::Config(args) => cli::config::run(args, &config, &theme),
+        cli::Command::Sync(args) => cli::sync::run(args, &config, &theme),
     }
 }

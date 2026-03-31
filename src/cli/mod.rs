@@ -11,6 +11,7 @@ pub mod open;
 pub mod project;
 pub mod remove;
 pub mod status;
+pub mod sync;
 pub mod tag;
 pub mod task_ref;
 
@@ -43,4 +44,6 @@ pub enum Command {
     Remove(remove::RemoveArgs),
     /// Manage moco configuration.
     Config(config::ConfigArgs),
+    /// Sync the ~/.moco/ directory with a remote git repository.
+    Sync(sync::SyncArgs),
 }

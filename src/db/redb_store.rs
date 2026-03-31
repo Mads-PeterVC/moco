@@ -99,6 +99,20 @@ impl Store for RedbStore {
         }
     }
 
+    fn get_project_by_id(&self, id: Uuid) -> Result<Option<Project>, MocoError> {
+        let tx = self.db.begin_read()?;
+        let table = tx.open_table(PROJECTS)?;
+
+        for entry in table.iter()? {
+            let (_, v) = entry?;
+            let project = Self::deserialize::<Project>(v.value())?;
+            if project.id == id {
+                return Ok(Some(project));
+            }
+        }
+        Ok(None)
+    }
+
     fn list_projects(&self) -> Result<Vec<Project>, MocoError> {
         let tx = self.db.begin_read()?;
         let table = tx.open_table(PROJECTS)?;
@@ -746,6 +760,33 @@ mod tests {
             .get_project_by_path(Path::new("/nonexistent"))
             .unwrap();
         assert!(result.is_none());
+    }
+
+    #[test]
+    fn get_project_by_id_returns_correct_project() {
+        let (_dir, mut store) = temp_store();
+        let p = store.create_project("myproject", Path::new("/tmp/myproject")).unwrap();
+        let found = store.get_project_by_id(p.id).unwrap().unwrap();
+        assert_eq!(found.id, p.id);
+        assert_eq!(found.name, "myproject");
+    }
+
+    #[test]
+    fn get_project_by_id_missing_returns_none() {
+        let (_dir, store) = temp_store();
+        let result = store.get_project_by_id(Uuid::new_v4()).unwrap();
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn get_project_by_id_multiple_projects() {
+        let (_dir, mut store) = temp_store();
+        let p1 = store.create_project("a", Path::new("/tmp/a")).unwrap();
+        let p2 = store.create_project("b", Path::new("/tmp/b")).unwrap();
+        let found = store.get_project_by_id(p1.id).unwrap().unwrap();
+        assert_eq!(found.id, p1.id);
+        let found2 = store.get_project_by_id(p2.id).unwrap().unwrap();
+        assert_eq!(found2.id, p2.id);
     }
 
     #[test]

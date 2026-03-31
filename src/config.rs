@@ -14,6 +14,11 @@ const DEFAULT_CONFIG_TEMPLATE: &str = r#"# moco configuration
 #
 # open_with = "code"
 
+# Remote URL for the ~/.moco/ git repository.
+# When set, `moco sync` can push/pull your database and config.
+#
+# sync_remote = "git@github.com:youruser/moco-sync.git"
+
 # [theme]
 # preset = "moco"  # moco (default) | default | dracula | nord | solarized-dark
 #
@@ -36,6 +41,10 @@ pub struct MocoConfig {
     /// Colour theme configuration.
     #[serde(default)]
     pub theme: ThemeConfig,
+    /// Remote URL for the `~/.moco/` git repository.
+    /// When set, `moco sync` will push/pull the database and config using this remote.
+    #[serde(default)]
+    pub sync_remote: Option<String>,
 }
 
 impl MocoConfig {
@@ -176,6 +185,28 @@ mod tests {
         if std::env::var("EDITOR").is_ok() {
             assert!(config.resolve_open_command().is_ok());
         }
+    }
+
+    #[test]
+    fn moco_config_parses_sync_remote() {
+        let tmp = TempDir::new().unwrap();
+        std::fs::write(
+            tmp.path().join("config.toml"),
+            "sync_remote = \"git@github.com:user/moco-sync.git\"\n",
+        )
+        .unwrap();
+        let config = MocoConfig::load(tmp.path()).expect("load should succeed");
+        assert_eq!(
+            config.sync_remote.as_deref(),
+            Some("git@github.com:user/moco-sync.git")
+        );
+    }
+
+    #[test]
+    fn moco_config_sync_remote_defaults_to_none() {
+        let tmp = TempDir::new().unwrap();
+        let config = MocoConfig::load(tmp.path()).expect("load should succeed");
+        assert!(config.sync_remote.is_none());
     }
 }
 

@@ -3,6 +3,7 @@ use std::path::Path;
 use clap::Args;
 
 use crate::db::Store;
+use crate::git;
 use crate::models::{Task, TaskStatus};
 use crate::theme::Theme;
 use crate::workspace;
@@ -22,7 +23,12 @@ pub struct ListArgs {
     pub tag: Option<String>,
 }
 
-pub fn run(args: &ListArgs, store: &dyn Store, cwd: &Path, theme: &Theme) -> anyhow::Result<()> {
+pub fn run(
+    args: &ListArgs,
+    store: &mut dyn Store,
+    cwd: &Path,
+    theme: &Theme,
+) -> anyhow::Result<()> {
     // Cross-project label view.
     if let Some(label) = &args.label {
         let groups = store.list_tasks_by_label(label)?;
@@ -53,14 +59,36 @@ pub fn run(args: &ListArgs, store: &dyn Store, cwd: &Path, theme: &Theme) -> any
         return Ok(());
     }
 
-    let (project_id, scope_label) = if args.global {
-        (None, "global".to_string())
+    let (project_id, scope_label, project_path) = if args.global {
+        (None, "global".to_string(), None)
     } else {
         match workspace::resolve(store, cwd)? {
-            Some(p) => (Some(p.id), format!("project '{}'", p.name)),
-            None => (None, "global".to_string()),
+            Some(p) => {
+                let path = p.path.clone();
+                (Some(p.id), format!("project '{}'", p.name), Some(path))
+            }
+            None => (None, "global".to_string(), None),
         }
     };
+
+    // Show git info in the project header and opportunistically cache the remote.
+    if let Some(ref path) = project_path {
+        if let Some(info) = git::git_info(path) {
+            let git_line = git::format_git_info(&info);
+            if !git_line.is_empty() {
+                println!("{}", theme.paint(&git_line, theme.accent));
+            }
+            // Cache the remote back to the project record if it has changed.
+            if let (Some(project_id), Some(remote_url)) = (project_id, &info.remote_url) {
+                if let Ok(Some(mut project)) = store.get_project_by_id(project_id) {
+                    if project.git_remote.as_deref() != Some(remote_url.as_str()) {
+                        project.git_remote = Some(remote_url.clone());
+                        let _ = store.update_project(&project);
+                    }
+                }
+            }
+        }
+    }
 
     // Tag filter view.
     if let Some(tag) = &args.tag {

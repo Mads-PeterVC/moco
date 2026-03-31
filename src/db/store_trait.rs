@@ -20,6 +20,9 @@ pub trait Store {
     /// Look up a project by its exact registered path.
     fn get_project_by_path(&self, path: &Path) -> Result<Option<Project>, MocoError>;
 
+    /// Look up a project by its UUID.
+    fn get_project_by_id(&self, id: Uuid) -> Result<Option<Project>, MocoError>;
+
     /// Return all registered projects.
     fn list_projects(&self) -> Result<Vec<Project>, MocoError>;
 

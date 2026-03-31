@@ -1,6 +1,7 @@
 mod relocate;
 pub mod list;
 mod category;
+mod info;
 mod set_category;
 
 use std::path::Path;
@@ -30,6 +31,8 @@ pub enum ProjectCommand {
     Open(open::OpenArgs),
     /// List all registered projects with their labels and task counts.
     List(list::ListArgs),
+    /// Show detailed information about a project, including git status.
+    Info(info::InfoArgs),
     /// Manage labels on the current project.
     Label(label::LabelArgs),
     /// Export tasks to a Markdown file.
@@ -56,6 +59,7 @@ pub fn run(
         ProjectCommand::Delete(a) => delete::run(a, store, theme),
         ProjectCommand::Open(a) => open::run(a, store, config, theme),
         ProjectCommand::List(a) => list::run(a, store, theme),
+        ProjectCommand::Info(a) => info::run(a, store, cwd, theme),
         ProjectCommand::Label(a) => label::run(a, store, cwd, theme),
         ProjectCommand::Export(a) => export::run(a, store, cwd, config, theme),
         ProjectCommand::Move(a) => relocate::run(a, store, theme),

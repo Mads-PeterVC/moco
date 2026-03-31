@@ -2,6 +2,7 @@ use chrono::{DateTime, Utc};
 use clap::Args;
 
 use crate::db::Store;
+use crate::git;
 use crate::models::TaskStatus;
 use crate::theme::Theme;
 
@@ -132,6 +133,23 @@ fn print_project_group_items(
             theme.paint("Directory:", theme.label),
             project.path.display(),
         );
+
+        // ── Git info ────────────────────────────────────────────────────────
+        // Try a live query first; fall back to the cached remote from the DB.
+        let live_info = git::git_info(&project.path);
+        let git_line = if let Some(ref info) = live_info {
+            let s = git::format_git_info(info);
+            if s.is_empty() { None } else { Some(s) }
+        } else {
+            project.git_remote.as_deref().map(|url| format!("↑ {} (cached)", url))
+        };
+        if let Some(line) = git_line {
+            println!(
+                "    {} {}",
+                theme.paint("Git:", theme.label),
+                line,
+            );
+        }
 
         // ── Labels ──────────────────────────────────────────────────────────
         if project.labels.is_empty() {

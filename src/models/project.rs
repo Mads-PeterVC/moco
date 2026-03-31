@@ -21,6 +21,12 @@ pub struct Project {
     /// Existing records without this field default to the Unix epoch (sort last).
     #[serde(default = "epoch")]
     pub last_active: DateTime<Utc>,
+    /// Cached git remote URL for this project's repository.
+    ///
+    /// Populated by live git discovery and persisted so moco can display it even when the
+    /// repository is temporarily absent (and will enable "remote-only" projects in a future phase).
+    #[serde(default)]
+    pub git_remote: Option<String>,
 }
 
 fn epoch() -> DateTime<Utc> {
@@ -38,6 +44,7 @@ impl Project {
             category: None,
             created_at: now,
             last_active: now,
+            git_remote: None,
         }
     }
 }
@@ -59,5 +66,28 @@ mod tests {
         let p = Project::new("myproject", path.clone());
         assert_eq!(p.name, "myproject");
         assert_eq!(p.path, path);
+    }
+
+    #[test]
+    fn new_project_git_remote_is_none() {
+        let p = Project::new("test", PathBuf::from("/tmp/test"));
+        assert!(p.git_remote.is_none());
+    }
+
+    #[test]
+    fn git_remote_round_trips_through_serde() {
+        let mut p = Project::new("test", PathBuf::from("/tmp/test"));
+        p.git_remote = Some("https://github.com/user/repo.git".to_string());
+        let json = serde_json::to_string(&p).unwrap();
+        let restored: Project = serde_json::from_str(&json).unwrap();
+        assert_eq!(restored.git_remote.as_deref(), Some("https://github.com/user/repo.git"));
+    }
+
+    #[test]
+    fn git_remote_defaults_to_none_in_old_records() {
+        // Simulate a JSON blob that does not have the git_remote field (old record).
+        let json = r#"{"id":"00000000-0000-0000-0000-000000000001","name":"old","path":"/tmp/old","labels":[],"created_at":"2024-01-01T00:00:00Z","last_active":"2024-01-01T00:00:00Z"}"#;
+        let p: Project = serde_json::from_str(json).unwrap();
+        assert!(p.git_remote.is_none(), "git_remote should default to None for old records");
     }
 }
