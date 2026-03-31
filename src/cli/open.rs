@@ -2,6 +2,7 @@ use clap::Args;
 
 use crate::config::AppConfig;
 use crate::db::Store;
+use crate::git;
 use crate::models::TaskStatus;
 use crate::theme::Theme;
 use crate::tui::{self, project_browser::{ProjectBrowser, ProjectBrowserOutcome}};
@@ -28,8 +29,9 @@ pub fn run(args: &OpenArgs, store: &mut impl Store, config: &AppConfig, theme: &
         );
     }
 
-    // Pre-compute (project, open_task_count) pairs for the browser.
-    let summaries: Vec<(crate::models::Project, usize)> = projects
+    // Pre-compute (project, open_task_count, compact_git) triples for the browser.
+    // git_info reads .git/ files — no network, negligible cost.
+    let summaries: Vec<(crate::models::Project, usize, Option<String>)> = projects
         .into_iter()
         .map(|p| {
             let open = store
@@ -38,17 +40,18 @@ pub fn run(args: &OpenArgs, store: &mut impl Store, config: &AppConfig, theme: &
                 .into_iter()
                 .filter(|t| t.status == TaskStatus::Open)
                 .count();
-            (p, open)
+            let git = git::git_info(&p.path).and_then(|i| git::format_compact_git(&i));
+            (p, open, git)
         })
         .collect();
 
     // Group summaries by category (in category display order, Uncategorized last).
     let categories = store.list_categories()?;
-    let mut groups: Vec<(String, Vec<(crate::models::Project, usize)>)> = Vec::new();
+    let mut groups: Vec<(String, Vec<(crate::models::Project, usize, Option<String>)>)> = Vec::new();
     for cat in &categories {
         let cat_projects: Vec<_> = summaries
             .iter()
-            .filter(|(p, _)| p.category.as_deref() == Some(cat.name.as_str()))
+            .filter(|(p, _, _)| p.category.as_deref() == Some(cat.name.as_str()))
             .cloned()
             .collect();
         if !cat_projects.is_empty() {
@@ -57,7 +60,7 @@ pub fn run(args: &OpenArgs, store: &mut impl Store, config: &AppConfig, theme: &
     }
     let uncategorized: Vec<_> = summaries
         .iter()
-        .filter(|(p, _)| p.category.is_none())
+        .filter(|(p, _, _)| p.category.is_none())
         .cloned()
         .collect();
     if !uncategorized.is_empty() {
@@ -65,7 +68,7 @@ pub fn run(args: &OpenArgs, store: &mut impl Store, config: &AppConfig, theme: &
     }
 
     // Flattened list in grouped order — indices returned by the browser refer to this.
-    let flat_summaries: Vec<(crate::models::Project, usize)> = groups
+    let flat_summaries: Vec<(crate::models::Project, usize, Option<String>)> = groups
         .iter()
         .flat_map(|(_, ps)| ps.iter().cloned())
         .collect();
@@ -75,8 +78,8 @@ pub fn run(args: &OpenArgs, store: &mut impl Store, config: &AppConfig, theme: &
         let canonical = path.canonicalize().unwrap_or_else(|_| path.clone());
         flat_summaries
             .into_iter()
-            .find(|(p, _)| p.path == canonical)
-            .map(|(p, _)| p)
+            .find(|(p, _, _)| p.path == canonical)
+            .map(|(p, _, _)| p)
             .ok_or_else(|| anyhow::anyhow!("No project registered at {}", path.display()))?
     } else {
         // Launch the TUI project browser.
@@ -102,7 +105,7 @@ pub fn run(args: &OpenArgs, store: &mut impl Store, config: &AppConfig, theme: &
         };
 
         drop(guard);
-        flat_summaries.into_iter().nth(selected_idx).map(|(p, _)| p).expect("index in bounds")
+        flat_summaries.into_iter().nth(selected_idx).map(|(p, _, _)| p).expect("index in bounds")
     };
 
     let open_cmd = config.moco_config.resolve_open_command()?;

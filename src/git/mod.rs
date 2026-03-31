@@ -46,8 +46,21 @@ pub fn format_git_info(info: &GitInfo) -> String {
     }
 }
 
-/// Format local divergence (HEAD vs tracking branch) as a compact string.
+/// Compact single-column git summary for tight UIs (e.g. the project browser).
 ///
+/// Returns `None` when no git info is available.  Otherwise returns a short
+/// string like `"⎇ main ✓"`, `"⎇ main ↑1"`, or just `"⎇ main"` when no
+/// tracking branch is configured.
+pub fn format_compact_git(info: &GitInfo) -> Option<String> {
+    let branch = info.branch.as_deref()?;
+    let div = match (info.local_ahead, info.local_behind) {
+        (Some(a), Some(b)) => format!("  {}", format_local_divergence(a, b)),
+        _ => String::new(),
+    };
+    Some(format!("⎇ {}{}", branch, div))
+}
+
+
 /// Examples: `"↑ 2  ↓ 3"`, `"↑ 2"`, `"↓ 1"`, `"✓"` (up to date).
 pub fn format_local_divergence(ahead: u32, behind: u32) -> String {
     match (ahead, behind) {

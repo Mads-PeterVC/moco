@@ -72,7 +72,7 @@ impl ProjectBrowser {
 
     /// Compute the visual (display) index of selectable item `selectable_idx` within
     /// the grouped list (accounting for header rows).
-    fn visual_index_of(groups: &[(String, Vec<(Project, usize)>)], selectable_idx: usize) -> usize {
+    fn visual_index_of(groups: &[(String, Vec<(Project, usize, Option<String>)>)], selectable_idx: usize) -> usize {
         let mut visual = 0;
         let mut remaining = selectable_idx;
         for (_, projects) in groups {
@@ -89,13 +89,13 @@ impl ProjectBrowser {
 
     /// Render the browser into the given area.
     ///
-    /// `groups` is a slice of `(category_name, [(project, open_task_count)])` pairs.
+    /// `groups` is a slice of `(category_name, [(project, open_task_count, compact_git)])` pairs.
     /// Projects without a category should be passed under `"Uncategorized"`.
     pub fn render(
         &mut self,
         frame: &mut Frame,
         area: Rect,
-        groups: &[(String, Vec<(Project, usize)>)],
+        groups: &[(String, Vec<(Project, usize, Option<String>)>)],
         theme: &Theme,
     ) {
         // Sync the visual list state with the current selectable selection.
@@ -124,7 +124,7 @@ impl ProjectBrowser {
                 ),
             ])));
 
-            for (p, open_count) in projects {
+            for (p, open_count, compact_git) in projects {
                 let path = p.path.display().to_string();
                 let path_preview = if path.len() > 45 {
                     format!("…{}", &path[path.len() - 45..])
@@ -150,7 +150,7 @@ impl ProjectBrowser {
                     Span::raw(date_str),
                 ]);
 
-                // Line 2: labels (if any) then open task count.
+                // Line 2: labels, open task count, and compact git info (if available).
                 let mut line2: Vec<Span> = vec![Span::raw("  ")];
                 for label in &p.labels {
                     line2.push(Span::styled(
@@ -169,6 +169,13 @@ impl ProjectBrowser {
                     count_text,
                     Style::default().fg(theme.open),
                 ));
+                if let Some(git_str) = compact_git {
+                    line2.push(Span::raw("   "));
+                    line2.push(Span::styled(
+                        git_str.clone(),
+                        Style::default().fg(theme.label),
+                    ));
+                }
 
                 items.push(ListItem::new(vec![line1, Line::from(line2)]));
             }
@@ -283,9 +290,10 @@ mod tests {
             (
                 Project::new("p", PathBuf::from("/tmp/p")),
                 0usize,
+                None::<String>,
             )
         };
-        let groups: Vec<(String, Vec<(Project, usize)>)> = vec![
+        let groups: Vec<(String, Vec<(Project, usize, Option<String>)>)> = vec![
             ("A".to_string(), vec![dummy_proj(), dummy_proj()]),
             ("B".to_string(), vec![dummy_proj()]),
         ];

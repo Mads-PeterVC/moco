@@ -13,15 +13,15 @@ use crate::tui::{
 
 /// Build browser groups from a flat summary list, respecting category order.
 fn build_groups(
-    summaries: &[(crate::models::Project, usize)],
+    summaries: &[(crate::models::Project, usize, Option<String>)],
     store: &impl Store,
-) -> Vec<(String, Vec<(crate::models::Project, usize)>)> {
+) -> Vec<(String, Vec<(crate::models::Project, usize, Option<String>)>)> {
     let categories = store.list_categories().unwrap_or_default();
     let mut groups: Vec<(String, Vec<_>)> = Vec::new();
     for cat in &categories {
         let ps: Vec<_> = summaries
             .iter()
-            .filter(|(p, _)| p.category.as_deref() == Some(cat.name.as_str()))
+            .filter(|(p, _, _)| p.category.as_deref() == Some(cat.name.as_str()))
             .cloned()
             .collect();
         if !ps.is_empty() {
@@ -30,7 +30,7 @@ fn build_groups(
     }
     let uncategorized: Vec<_> = summaries
         .iter()
-        .filter(|(p, _)| p.category.is_none())
+        .filter(|(p, _, _)| p.category.is_none())
         .cloned()
         .collect();
     if !uncategorized.is_empty() {
@@ -63,8 +63,8 @@ pub fn run(args: &MoveArgs, store: &mut impl Store, theme: &Theme) -> anyhow::Re
         );
     }
 
-    // Pre-compute (project, open_task_count) pairs for the browser.
-    let summaries: Vec<(crate::models::Project, usize)> = projects
+    // Pre-compute (project, open_task_count, compact_git) triples for the browser.
+    let summaries: Vec<(crate::models::Project, usize, Option<String>)> = projects
         .into_iter()
         .map(|p| {
             let open = store
@@ -73,7 +73,7 @@ pub fn run(args: &MoveArgs, store: &mut impl Store, theme: &Theme) -> anyhow::Re
                 .into_iter()
                 .filter(|t| t.status == TaskStatus::Open)
                 .count();
-            (p, open)
+            (p, open, None)
         })
         .collect();
 
@@ -81,7 +81,7 @@ pub fn run(args: &MoveArgs, store: &mut impl Store, theme: &Theme) -> anyhow::Re
     let groups = build_groups(&summaries, store);
 
     // Flatten groups into a stable ordered list for index resolution.
-    let flat_summaries: Vec<(crate::models::Project, usize)> = groups
+    let flat_summaries: Vec<(crate::models::Project, usize, Option<String>)> = groups
         .iter()
         .flat_map(|(_, ps)| ps.iter().cloned())
         .collect();
@@ -91,8 +91,8 @@ pub fn run(args: &MoveArgs, store: &mut impl Store, theme: &Theme) -> anyhow::Re
         let canonical = path.canonicalize().unwrap_or_else(|_| path.clone());
         flat_summaries
             .into_iter()
-            .find(|(p, _)| p.path == canonical)
-            .map(|(p, _)| p)
+            .find(|(p, _, _)| p.path == canonical)
+            .map(|(p, _, _)| p)
             .ok_or_else(|| anyhow::anyhow!("No project registered at {}", path.display()))?
     } else {
         let mut guard = tui::enter()?;
@@ -117,7 +117,7 @@ pub fn run(args: &MoveArgs, store: &mut impl Store, theme: &Theme) -> anyhow::Re
         };
 
         drop(guard);
-        flat_summaries.into_iter().nth(selected_idx).map(|(p, _)| p).expect("index in bounds")
+        flat_summaries.into_iter().nth(selected_idx).map(|(p, _, _)| p).expect("index in bounds")
     };
 
     let old_path = project.path.clone();
