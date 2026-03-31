@@ -99,10 +99,11 @@ pub fn run(args: &InfoArgs, store: &mut dyn Store, cwd: &Path, theme: &Theme, co
     let live_info = git::git_info(&project.path);
     match &live_info {
         Some(info) => {
+            let dirty_suffix = if info.dirty == Some(true) { "*" } else { "" };
             let branch_str = info
                 .branch
                 .as_deref()
-                .map(|b| theme.paint(b, theme.accent))
+                .map(|b| theme.paint(format!("{}{}", b, dirty_suffix), theme.accent))
                 .unwrap_or_else(|| "(detached HEAD)".to_string());
             println!("{} {}", label("Git branch"), branch_str);
 

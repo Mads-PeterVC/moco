@@ -17,6 +17,9 @@ pub struct GitInfo {
     /// Commits in the remote tracking branch that are not yet in HEAD (need to pull).
     /// `None` when there is no tracking branch or the count could not be determined.
     pub local_behind: Option<u32>,
+    /// `true` when tracked files have uncommitted changes (staged or unstaged).
+    /// `None` when the status could not be determined.
+    pub dirty: Option<bool>,
 }
 
 /// Abstraction over a git backend so the underlying implementation (currently
@@ -46,6 +49,15 @@ pub trait GitBackend {
     /// Returns `Err` with a human-readable description on failure (no network,
     /// auth error, etc.).
     fn fetch(path: &Path) -> Result<(), String>
+    where
+        Self: Sized;
+
+    /// Return `true` when tracked files have uncommitted changes (staged or unstaged).
+    ///
+    /// Uses `git status --porcelain` and ignores untracked (`??`) lines so that
+    /// projects with untracked files are not marked dirty.  Returns `None` when
+    /// the check cannot be performed (no git repo, etc.).
+    fn has_uncommitted_changes(path: &Path) -> Option<bool>
     where
         Self: Sized;
 }

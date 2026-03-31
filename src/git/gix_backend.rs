@@ -53,12 +53,16 @@ impl GitBackend for GixBackend {
                 .map(|(a, b)| (Some(a), Some(b)))
                 .unwrap_or((None, None));
 
+        // ── Dirty working tree (tracked files only) ───────────────────────────
+        let dirty = Self::has_uncommitted_changes(path);
+
         Some(GitInfo {
             branch: branch_name,
             remote_url,
             remote_name,
             local_ahead,
             local_behind,
+            dirty,
         })
     }
 
@@ -107,6 +111,28 @@ impl GitBackend for GixBackend {
             let stderr = String::from_utf8_lossy(&output.stderr);
             Err(stderr.trim().to_string())
         }
+    }
+
+    fn has_uncommitted_changes(path: &Path) -> Option<bool> {
+        let output = Command::new("git")
+            .args(["status", "--porcelain"])
+            .current_dir(path)
+            .output()
+            .ok()?;
+
+        if !output.status.success() {
+            return None;
+        }
+
+        // Each line is "<XY> <file>".  Skip untracked lines ("?? …") so that
+        // projects with only untracked files are not shown as dirty.
+        let has_changes = output
+            .stdout
+            .split(|&b| b == b'\n')
+            .filter(|line| !line.is_empty())
+            .any(|line| !line.starts_with(b"??"));
+
+        Some(has_changes)
     }
 }
 
@@ -263,5 +289,47 @@ mod tests {
         std::fs::create_dir_all(&subdir).unwrap();
         let info = GixBackend::discover(&subdir).expect("should detect git repo from subdir");
         assert_eq!(info.branch.as_deref(), Some("main"));
+    }
+
+    #[test]
+    fn clean_repo_is_not_dirty() {
+        let dir = make_git_repo();
+        assert_eq!(GixBackend::has_uncommitted_changes(dir.path()), Some(false));
+    }
+
+    #[test]
+    fn unstaged_change_to_tracked_file_is_dirty() {
+        let dir = make_git_repo();
+        std::fs::write(dir.path().join("README.md"), "# modified").unwrap();
+        assert_eq!(GixBackend::has_uncommitted_changes(dir.path()), Some(true));
+    }
+
+    #[test]
+    fn staged_change_is_dirty() {
+        let dir = make_git_repo();
+        std::fs::write(dir.path().join("README.md"), "# staged").unwrap();
+        Command::new("git")
+            .args(["add", "README.md"])
+            .current_dir(dir.path())
+            .status()
+            .unwrap();
+        assert_eq!(GixBackend::has_uncommitted_changes(dir.path()), Some(true));
+    }
+
+    #[test]
+    fn untracked_file_only_is_not_dirty() {
+        let dir = make_git_repo();
+        std::fs::write(dir.path().join("newfile.txt"), "untracked").unwrap();
+        assert_eq!(GixBackend::has_uncommitted_changes(dir.path()), Some(false));
+    }
+
+    #[test]
+    fn git_info_includes_dirty_flag() {
+        let dir = make_git_repo();
+        let info = GixBackend::discover(dir.path()).unwrap();
+        assert_eq!(info.dirty, Some(false));
+        std::fs::write(dir.path().join("README.md"), "# changed").unwrap();
+        let info2 = GixBackend::discover(dir.path()).unwrap();
+        assert_eq!(info2.dirty, Some(true));
     }
 }

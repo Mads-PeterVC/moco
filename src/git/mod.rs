@@ -49,15 +49,17 @@ pub fn format_git_info(info: &GitInfo) -> String {
 /// Compact single-column git summary for tight UIs (e.g. the project browser).
 ///
 /// Returns `None` when no git info is available.  Otherwise returns a short
-/// string like `"⎇ main ✓"`, `"⎇ main ↑1"`, or just `"⎇ main"` when no
-/// tracking branch is configured.
+/// string like `"⎇ main ✓"`, `"⎇ main* ↑1"`, or just `"⎇ main"` when no
+/// tracking branch is configured.  A trailing `*` after the branch name
+/// indicates uncommitted changes to tracked files.
 pub fn format_compact_git(info: &GitInfo) -> Option<String> {
     let branch = info.branch.as_deref()?;
+    let dirty_mark = if info.dirty == Some(true) { "*" } else { "" };
     let div = match (info.local_ahead, info.local_behind) {
         (Some(a), Some(b)) => format!("  {}", format_local_divergence(a, b)),
         _ => String::new(),
     };
-    Some(format!("⎇ {}{}", branch, div))
+    Some(format!("⎇ {}{}{}", branch, dirty_mark, div))
 }
 
 
@@ -117,6 +119,7 @@ mod tests {
             remote_name: None,
             local_ahead: None,
             local_behind: None,
+            dirty: None,
         }
     }
 
@@ -194,5 +197,47 @@ mod tests {
         let recent = Utc::now() - chrono::Duration::hours(1);
         let result = format_cached_divergence(Some(0), Some(0), Some(recent), 12).unwrap();
         assert!(result.contains("✓"));
+    }
+
+    // ── format_compact_git ───────────────────────────────────────────────────
+
+    fn compact_info(branch: Option<&str>, ahead: Option<u32>, behind: Option<u32>, dirty: Option<bool>) -> GitInfo {
+        GitInfo {
+            branch: branch.map(str::to_owned),
+            remote_url: None,
+            remote_name: None,
+            local_ahead: ahead,
+            local_behind: behind,
+            dirty,
+        }
+    }
+
+    #[test]
+    fn compact_git_none_when_no_branch() {
+        assert!(format_compact_git(&compact_info(None, None, None, None)).is_none());
+    }
+
+    #[test]
+    fn compact_git_branch_only() {
+        let s = format_compact_git(&compact_info(Some("main"), None, None, None)).unwrap();
+        assert_eq!(s, "⎇ main");
+    }
+
+    #[test]
+    fn compact_git_dirty_appends_star() {
+        let s = format_compact_git(&compact_info(Some("main"), None, None, Some(true))).unwrap();
+        assert_eq!(s, "⎇ main*");
+    }
+
+    #[test]
+    fn compact_git_clean_no_star() {
+        let s = format_compact_git(&compact_info(Some("main"), None, None, Some(false))).unwrap();
+        assert_eq!(s, "⎇ main");
+    }
+
+    #[test]
+    fn compact_git_dirty_with_divergence() {
+        let s = format_compact_git(&compact_info(Some("main"), Some(1), Some(0), Some(true))).unwrap();
+        assert_eq!(s, "⎇ main*  ↑ 1");
     }
 }
