@@ -135,7 +135,7 @@ impl ProjectBrowser {
                 // Line 1: bold name + accent path + right-justified date.
                 let date = format_last_active(&p.last_active);
                 let date_str = format!("[{date}]");
-                let remaining = (area.width as usize).saturating_sub(fixed);
+                let remaining = (area.width as usize).saturating_sub(fixed + 6); // +2 for block borders, +4 margin
                 let spacer = " ".repeat(remaining.saturating_sub(date_str.len()));
                 let line1 = Line::from(vec![
                     Span::styled(
