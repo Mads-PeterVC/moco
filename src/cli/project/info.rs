@@ -2,6 +2,7 @@ use std::path::Path;
 
 use clap::Args;
 
+use crate::config::AppConfig;
 use crate::db::Store;
 use crate::git;
 use crate::models::TaskStatus;
@@ -17,7 +18,7 @@ pub struct InfoArgs {
     pub name: Option<String>,
 }
 
-pub fn run(args: &InfoArgs, store: &mut dyn Store, cwd: &Path, theme: &Theme) -> anyhow::Result<()> {
+pub fn run(args: &InfoArgs, store: &mut dyn Store, cwd: &Path, theme: &Theme, config: &AppConfig) -> anyhow::Result<()> {
     let project = if let Some(name) = &args.name {
         let all = store.list_projects()?;
         all.into_iter()
@@ -28,6 +29,7 @@ pub fn run(args: &InfoArgs, store: &mut dyn Store, cwd: &Path, theme: &Theme) ->
             .ok_or_else(|| anyhow::anyhow!("No project found for the current directory. Run `moco project init <name>` to register one."))?
     };
 
+    let ttl = config.moco_config.git_status_ttl_hours;
     let label = |s: &str| theme.paint(format!("{:>12}:", s), theme.label);
 
     // ── Identity ─────────────────────────────────────────────────────────────
@@ -122,6 +124,17 @@ pub fn run(args: &InfoArgs, store: &mut dyn Store, cwd: &Path, theme: &Theme) ->
                 println!("{} (none configured)", label("Git remote"));
             }
 
+            // Local divergence (no network).
+            if let (Some(ahead), Some(behind)) = (info.local_ahead, info.local_behind) {
+                let div_str = git::format_local_divergence(ahead, behind);
+                let color = if behind > 0 { theme.defer } else { theme.complete };
+                println!(
+                    "{} {}",
+                    label("Local"),
+                    theme.paint(&div_str, color),
+                );
+            }
+
             // Opportunistically cache the remote if it has changed.
             if let Some(url) = &info.remote_url {
                 if project.git_remote.as_deref() != Some(url.as_str()) {
@@ -145,6 +158,39 @@ pub fn run(args: &InfoArgs, store: &mut dyn Store, cwd: &Path, theme: &Theme) ->
         }
     }
 
+    // ── Cached remote divergence (from last moco sync status) ────────────────
+    if project.git_sync_enabled {
+        match git::format_cached_divergence(
+            project.remote_ahead,
+            project.remote_behind,
+            project.last_remote_check,
+            ttl,
+        ) {
+            Some(cached) => {
+                let color = if project.remote_behind.unwrap_or(0) > 0 {
+                    theme.defer
+                } else {
+                    theme.complete
+                };
+                println!(
+                    "{} {}",
+                    label("Remote"),
+                    theme.paint(&cached, color),
+                );
+            }
+            None if project.last_remote_check.is_some() => {
+                println!(
+                    "{} {} — run `moco sync status` to refresh",
+                    label("Remote"),
+                    theme.paint("(stale)", theme.defer),
+                );
+            }
+            None => {}
+        }
+    } else {
+        println!("{} (sync disabled)", label("Remote"));
+    }
+
     println!();
     Ok(())
 }
@@ -162,11 +208,19 @@ mod tests {
         (dir, store)
     }
 
+    fn default_config() -> AppConfig {
+        AppConfig {
+            moco_dir: std::path::PathBuf::from("/tmp"),
+            db_path: std::path::PathBuf::from("/tmp/moco.db"),
+            moco_config: Default::default(),
+        }
+    }
+
     #[test]
     fn info_errors_when_not_in_project_and_no_name() {
         let (tmp, mut store) = setup();
         let args = InfoArgs { name: None };
-        let result = run(&args, &mut store, tmp.path(), &crate::theme::Theme::resolve(&Default::default()));
+        let result = run(&args, &mut store, tmp.path(), &crate::theme::Theme::resolve(&Default::default()), &default_config());
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("No project found"));
     }
@@ -175,7 +229,7 @@ mod tests {
     fn info_errors_for_unknown_name() {
         let (tmp, mut store) = setup();
         let args = InfoArgs { name: Some("nonexistent".to_string()) };
-        let result = run(&args, &mut store, tmp.path(), &crate::theme::Theme::resolve(&Default::default()));
+        let result = run(&args, &mut store, tmp.path(), &crate::theme::Theme::resolve(&Default::default()), &default_config());
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("No project named"));
     }
@@ -190,7 +244,7 @@ mod tests {
         let args = InfoArgs { name: Some("myproj".to_string()) };
         let theme = crate::theme::Theme::resolve(&Default::default());
         // Should not error.
-        run(&args, &mut store, tmp.path(), &theme).unwrap();
+        run(&args, &mut store, tmp.path(), &theme, &default_config()).unwrap();
     }
 
     #[test]
@@ -202,6 +256,6 @@ mod tests {
 
         let args = InfoArgs { name: None };
         let theme = crate::theme::Theme::resolve(&Default::default());
-        run(&args, &mut store, &project_dir, &theme).unwrap();
+        run(&args, &mut store, &project_dir, &theme, &default_config()).unwrap();
     }
 }

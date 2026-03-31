@@ -19,6 +19,11 @@ const DEFAULT_CONFIG_TEMPLATE: &str = r#"# moco configuration
 #
 # sync_remote = "git@github.com:youruser/moco-sync.git"
 
+# Hours before cached remote sync status (from `moco sync status`) is
+# considered stale and hidden from project listings.  Default: 12.
+#
+# git_status_ttl_hours = 12
+
 # [theme]
 # preset = "moco"  # moco (default) | default | dracula | nord | solarized-dark
 #
@@ -33,7 +38,7 @@ const DEFAULT_CONFIG_TEMPLATE: &str = r#"# moco configuration
 "#;
 
 /// User-editable preferences loaded from `~/.moco/config.toml`.
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MocoConfig {
     /// Command to open a project directory (e.g. `"code"`, `"vim"`).
     /// Falls back to `$EDITOR` if `None`.
@@ -45,6 +50,25 @@ pub struct MocoConfig {
     /// When set, `moco sync` will push/pull the database and config using this remote.
     #[serde(default)]
     pub sync_remote: Option<String>,
+    /// Hours before cached remote sync status (from `moco sync status`) is considered
+    /// stale and hidden from project listings.  Default: 12.
+    #[serde(default = "default_git_status_ttl_hours")]
+    pub git_status_ttl_hours: u64,
+}
+
+impl Default for MocoConfig {
+    fn default() -> Self {
+        Self {
+            open_with: None,
+            theme: ThemeConfig::default(),
+            sync_remote: None,
+            git_status_ttl_hours: default_git_status_ttl_hours(),
+        }
+    }
+}
+
+fn default_git_status_ttl_hours() -> u64 {
+    12
 }
 
 impl MocoConfig {
@@ -207,6 +231,21 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let config = MocoConfig::load(tmp.path()).expect("load should succeed");
         assert!(config.sync_remote.is_none());
+    }
+
+    #[test]
+    fn moco_config_parses_git_status_ttl_hours() {
+        let tmp = TempDir::new().unwrap();
+        std::fs::write(tmp.path().join("config.toml"), "git_status_ttl_hours = 6\n").unwrap();
+        let config = MocoConfig::load(tmp.path()).expect("load should succeed");
+        assert_eq!(config.git_status_ttl_hours, 6);
+    }
+
+    #[test]
+    fn moco_config_git_status_ttl_hours_defaults_to_12() {
+        let tmp = TempDir::new().unwrap();
+        let config = MocoConfig::load(tmp.path()).expect("load should succeed");
+        assert_eq!(config.git_status_ttl_hours, 12);
     }
 }
 

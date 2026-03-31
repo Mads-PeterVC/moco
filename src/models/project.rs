@@ -27,6 +27,23 @@ pub struct Project {
     /// repository is temporarily absent (and will enable "remote-only" projects in a future phase).
     #[serde(default)]
     pub git_remote: Option<String>,
+    /// Whether `moco sync status` should include this project in network (fetch) checks.
+    /// Defaults to `true`. Set to `false` via `moco project set-sync --disable`.
+    #[serde(default = "default_true")]
+    pub git_sync_enabled: bool,
+    /// Commits in HEAD not yet pushed to the remote, as of the last `moco sync status`.
+    #[serde(default)]
+    pub remote_ahead: Option<u32>,
+    /// Commits on the remote not yet pulled into HEAD, as of the last `moco sync status`.
+    #[serde(default)]
+    pub remote_behind: Option<u32>,
+    /// Timestamp of the last successful `moco sync status` fetch for this project.
+    #[serde(default)]
+    pub last_remote_check: Option<DateTime<Utc>>,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 fn epoch() -> DateTime<Utc> {
@@ -45,6 +62,10 @@ impl Project {
             created_at: now,
             last_active: now,
             git_remote: None,
+            git_sync_enabled: true,
+            remote_ahead: None,
+            remote_behind: None,
+            last_remote_check: None,
         }
     }
 }
@@ -89,5 +110,40 @@ mod tests {
         let json = r#"{"id":"00000000-0000-0000-0000-000000000001","name":"old","path":"/tmp/old","labels":[],"created_at":"2024-01-01T00:00:00Z","last_active":"2024-01-01T00:00:00Z"}"#;
         let p: Project = serde_json::from_str(json).unwrap();
         assert!(p.git_remote.is_none(), "git_remote should default to None for old records");
+    }
+
+    #[test]
+    fn new_project_git_sync_enabled_by_default() {
+        let p = Project::new("test", PathBuf::from("/tmp/test"));
+        assert!(p.git_sync_enabled, "git_sync_enabled should default to true");
+    }
+
+    #[test]
+    fn new_project_sync_fields_are_none() {
+        let p = Project::new("test", PathBuf::from("/tmp/test"));
+        assert!(p.remote_ahead.is_none());
+        assert!(p.remote_behind.is_none());
+        assert!(p.last_remote_check.is_none());
+    }
+
+    #[test]
+    fn sync_fields_round_trip_through_serde() {
+        let mut p = Project::new("test", PathBuf::from("/tmp/test"));
+        p.remote_ahead = Some(2);
+        p.remote_behind = Some(1);
+        p.last_remote_check = Some(chrono::Utc::now());
+        let json = serde_json::to_string(&p).unwrap();
+        let restored: Project = serde_json::from_str(&json).unwrap();
+        assert_eq!(restored.remote_ahead, Some(2));
+        assert_eq!(restored.remote_behind, Some(1));
+        assert!(restored.last_remote_check.is_some());
+    }
+
+    #[test]
+    fn git_sync_enabled_defaults_to_true_in_old_records() {
+        // Simulate a record that pre-dates the git_sync_enabled field.
+        let json = r#"{"id":"00000000-0000-0000-0000-000000000002","name":"old","path":"/tmp/old","labels":[],"created_at":"2024-01-01T00:00:00Z","last_active":"2024-01-01T00:00:00Z"}"#;
+        let p: Project = serde_json::from_str(json).unwrap();
+        assert!(p.git_sync_enabled, "should default to enabled for old records");
     }
 }

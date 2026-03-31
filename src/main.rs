@@ -34,6 +34,6 @@ fn main() -> anyhow::Result<()> {
         cli::Command::Note(args) => cli::note::run(args, &mut store, &cwd, &theme),
         cli::Command::Remove(args) => cli::remove::run(args, &mut store, &cwd, &theme),
         cli::Command::Config(args) => cli::config::run(args, &config, &theme),
-        cli::Command::Sync(args) => cli::sync::run(args, &config, &theme),
+        cli::Command::Sync(args) => cli::sync::run(args, &mut store, &config, &theme),
     }
 }

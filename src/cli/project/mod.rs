@@ -3,6 +3,7 @@ pub mod list;
 mod category;
 mod info;
 mod set_category;
+mod set_sync;
 
 use std::path::Path;
 
@@ -45,6 +46,9 @@ pub enum ProjectCommand {
     /// Assign a project to a category.
     #[command(name = "set-category")]
     SetCategory(set_category::SetCategoryArgs),
+    /// Enable or disable `moco sync status` network checks for a project.
+    #[command(name = "set-sync")]
+    SetSync(set_sync::SetSyncArgs),
 }
 
 pub fn run(
@@ -58,12 +62,13 @@ pub fn run(
         ProjectCommand::Init(a) => init::run(a, store, cwd, theme),
         ProjectCommand::Delete(a) => delete::run(a, store, theme),
         ProjectCommand::Open(a) => open::run(a, store, config, theme),
-        ProjectCommand::List(a) => list::run(a, store, theme),
-        ProjectCommand::Info(a) => info::run(a, store, cwd, theme),
+        ProjectCommand::List(a) => list::run(a, store, theme, config),
+        ProjectCommand::Info(a) => info::run(a, store, cwd, theme, config),
         ProjectCommand::Label(a) => label::run(a, store, cwd, theme),
         ProjectCommand::Export(a) => export::run(a, store, cwd, config, theme),
         ProjectCommand::Move(a) => relocate::run(a, store, theme),
         ProjectCommand::Category(a) => category::run(a, store, theme),
         ProjectCommand::SetCategory(a) => set_category::run(a, store, theme),
+        ProjectCommand::SetSync(a) => set_sync::run(a, store, cwd, theme),
     }
 }

@@ -1,6 +1,7 @@
 use chrono::{DateTime, Utc};
 use clap::Args;
 
+use crate::config::AppConfig;
 use crate::db::Store;
 use crate::git;
 use crate::models::TaskStatus;
@@ -25,7 +26,7 @@ pub fn format_last_active(dt: &DateTime<Utc>) -> String {
     }
 }
 
-pub fn run(args: &ListArgs, store: &dyn Store, theme: &Theme) -> anyhow::Result<()> {
+pub fn run(args: &ListArgs, store: &dyn Store, theme: &Theme, config: &AppConfig) -> anyhow::Result<()> {
     // Validate --category filter early so we can error even when no projects exist.
     if let Some(filter) = &args.category {
         if store.get_category(filter)?.is_none() {
@@ -59,7 +60,7 @@ pub fn run(args: &ListArgs, store: &dyn Store, theme: &Theme) -> anyhow::Result<
             println!("No projects in category '{}'.", filter);
             return Ok(());
         }
-        print_project_group(filter, &projects, store, theme)?;
+        print_project_group(filter, &projects, store, theme, config)?;
     } else {
         // Group all projects by category (categories in order, Uncategorized last).
         let categories = store.list_categories()?;
@@ -94,7 +95,7 @@ pub fn run(args: &ListArgs, store: &dyn Store, theme: &Theme) -> anyhow::Result<
                 "{}",
                 theme.paint(format!("── {header} ──"), theme.label),
             );
-            print_project_group_items(group_projects, store, theme)?;
+            print_project_group_items(group_projects, store, theme, config)?;
         }
     }
 
@@ -107,9 +108,10 @@ fn print_project_group(
     projects: &[crate::models::Project],
     store: &dyn Store,
     theme: &Theme,
+    config: &AppConfig,
 ) -> anyhow::Result<()> {
     println!("Projects in category '{}' ({}):\n", header, projects.len());
-    print_project_group_items(projects, store, theme)
+    print_project_group_items(projects, store, theme, config)
 }
 
 /// Print a list of project entries without a group header.
@@ -117,7 +119,10 @@ fn print_project_group_items(
     projects: &[crate::models::Project],
     store: &dyn Store,
     theme: &Theme,
+    config: &AppConfig,
 ) -> anyhow::Result<()> {
+    let ttl = config.moco_config.git_status_ttl_hours;
+
     for project in projects {
         // ── Name + last active ───────────────────────────────────────────────
         let date = format_last_active(&project.last_active);
@@ -134,7 +139,7 @@ fn print_project_group_items(
             project.path.display(),
         );
 
-        // ── Git info ────────────────────────────────────────────────────────
+        // ── Git info (branch + remote URL) ───────────────────────────────────
         // Try a live query first; fall back to the cached remote from the DB.
         let live_info = git::git_info(&project.path);
         let git_line = if let Some(ref info) = live_info {
@@ -148,6 +153,58 @@ fn print_project_group_items(
                 "    {} {}",
                 theme.paint("Git:", theme.label),
                 line,
+            );
+        }
+
+        // ── Local divergence (free, no network) ──────────────────────────────
+        if let Some(ref info) = live_info {
+            if let (Some(ahead), Some(behind)) = (info.local_ahead, info.local_behind) {
+                let div_str = git::format_local_divergence(ahead, behind);
+                let color = if behind > 0 { theme.defer } else { theme.complete };
+                println!(
+                    "    {} {}",
+                    theme.paint("Local:", theme.label),
+                    theme.paint(&div_str, color),
+                );
+            }
+        }
+
+        // ── Cached remote divergence (from last moco sync status) ────────────
+        if project.git_sync_enabled {
+            match git::format_cached_divergence(
+                project.remote_ahead,
+                project.remote_behind,
+                project.last_remote_check,
+                ttl,
+            ) {
+                Some(cached) => {
+                    let color = if project.remote_behind.unwrap_or(0) > 0 {
+                        theme.defer
+                    } else {
+                        theme.complete
+                    };
+                    println!(
+                        "    {} {}",
+                        theme.paint("Remote:", theme.label),
+                        theme.paint(&cached, color),
+                    );
+                }
+                None if project.last_remote_check.is_some() => {
+                    // Was checked before but TTL expired.
+                    println!(
+                        "    {} {} — run `moco sync status` to refresh",
+                        theme.paint("Remote:", theme.label),
+                        theme.paint("(stale)", theme.defer),
+                    );
+                }
+                None => {
+                    // Never checked — omit silently.
+                }
+            }
+        } else {
+            println!(
+                "    {} (sync disabled)",
+                theme.paint("Remote:", theme.label),
             );
         }
 
